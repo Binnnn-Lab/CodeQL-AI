@@ -23,7 +23,7 @@
 ## Step 2: 追踪潜在清洗函数
 使用工具 `find_potential_functions`。
 *   **输入**: Step 1 中提取的 `taint_json` 和 `database_path`。
-*   **目的**: 查找从 Source 到 Sink 的数据流路径上，所有可能对数据进行了处理但未被 CodeQL 识别的中间函数。
+* 将输出交给Step3 处理
 
 ## Step 3: 获取函数实现
 对于 Step 2 返回的每一个潜在函数：
@@ -35,7 +35,7 @@
 1.  **判定**: 该函数是否有效地清洗了特定的漏洞（例如：是否对格式化字符串进行了校验，或对 SQL 注入字符进行了转义）？
 2.  **生成补丁**: 如果确认为 Sanitizer，请编写一段 CodeQL 谓词（Predicate）或类（Class）代码来描述该清洗逻辑。
 3.  **应用修复**: 使用工具 `patch_ql`。
-    *   **输入**: `patched_ql_path` (请保存至：/home/builder/benchmark/CodeQL-MCP-Tool/Lib/Sanitizer/codeql-queries/patched_ql) 和 `new_content` (包含新 Sanitizer 定义的完整或片段 QL 代码)。
+    *   **输入**: `patched_ql_path`  和 `new_content` (包含新 Sanitizer 定义的完整或片段 QL 代码)。
     *   **目的**: 将新的 Sanitizer 逻辑写入查询脚本，消除误报。
 
 # Constraints
