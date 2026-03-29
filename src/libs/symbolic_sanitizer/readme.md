@@ -205,7 +205,7 @@
 
 ---
 
-### Step 4: 约束生成 (constraint-generator LLM Skill)
+### Step 4: 约束生成 (寻找并使用constraint-generator LLM Skill)
 
 **读取函数实现 (可选):**
 ```json
