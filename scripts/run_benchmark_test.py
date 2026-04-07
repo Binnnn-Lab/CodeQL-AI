@@ -286,7 +286,7 @@ INTERNAL_THREADS = TOTAL_THREADS // EXTERNAL_TASKS
 JULIET_ROOT_DIR = Path(JULIET_SCRIPT).resolve().parent
 
 CODEQL_DB_CREATE = [
-    "sudo", "codeql", "database", "create",   
+    "codeql", "database", "create",   
     "--language=cpp",
     f"--source-root={JULIET_ROOT_DIR}",   # <--- 新增这一行：强制锁定源码目录
     "-j", str(TOTAL_THREADS),
@@ -294,11 +294,11 @@ CODEQL_DB_CREATE = [
     "--command",
 ]
 
+# 修改后：去掉最后的 "--output"
 CODEQL_DB_ANALYZE = [
-    "sudo", "codeql", "database", "analyze",
+    "codeql", "database", "analyze",
     "-j", str(INTERNAL_THREADS),
-    "--format=sarif-latest",
-    "--output",
+    "--format=sarif-latest"
 ]
 
 def run_subprocess(command, cwd=None):
@@ -321,16 +321,18 @@ def resolve_cmake_file(build_type: str) -> Optional[Path]:
             return item
     return None
 
-def build_full_db(path_prefix: str="") -> bool:
-    """使用 Juliet 脚本构建完整的 CodeQL 数据库
+def build_full_db(path_prefix: str="", force_rebuild: bool=False) -> bool:
+    """使用 Juliet 脚本构建完整的 CodeQL 数据库（包含所有 CWE）
 
     args:
         path_prefix: db路径前缀
+        force_rebuild: 是否强制覆盖重建数据库
     return:
         构建成功返回 True, output_path，否则返回 False, None
     """
     output_path = DB_BASE_PATH / Path(path_prefix + "juliet_full_db")
-    if output_path.exists():
+    
+    if output_path.exists() and not force_rebuild:
         print(f"[⚠️] CodeQL 数据库已存在，跳过构建: {output_path}")
         return True, output_path
     command = CODEQL_DB_CREATE + [
@@ -346,13 +348,14 @@ def build_full_db(path_prefix: str="") -> bool:
     print(f"[✅] 成功构建 CodeQL 数据库: {output_path}")
     return True, output_path
 
-def build_tree_cwe_db(path_prefix: str="", cwe_id: str="", build_type: str="good") -> bool:
+def build_tree_cwe_db(path_prefix: str="", cwe_id: str="", build_type: str="good", force_rebuild: bool=False) -> bool:
     """使用 Juliet 脚本构建指定 CWE 树的 CodeQL 数据库
 
     args:
         path_prefix: db路径前缀
         cwe_id: CWE 编号
         build_type: 构建类型，good 或 bad
+        force_rebuild: 是否强制覆盖重建数据库
     return:
         构建成功返回 True，否则返回 False
     """
@@ -360,7 +363,8 @@ def build_tree_cwe_db(path_prefix: str="", cwe_id: str="", build_type: str="good
         print(f"[❌] 未知的 CWE 编号: {cwe_id}")
         return False
     output_path = DB_BASE_PATH / Path(f"{path_prefix}_{build_type}_tree_cwe-{cwe_id}_db")
-    if output_path.exists():
+    
+    if output_path.exists() and not force_rebuild:
         print(f"[⚠️] CodeQL 数据库已存在，跳过构建: {output_path}")
         return True
 
@@ -463,22 +467,21 @@ def analyze_db(ql_path: Path, db_path: Path, output_path: Path, rerun: bool = Fa
         output_path: 分析结果输出路径
         rerun: 是否强制重新分析（CodeQL --rerun 标志）
     """
-    # 复制全局模板，避免修改原列表
     command = CODEQL_DB_ANALYZE.copy()
 
     if rerun:
-        # 在 "analyze" 之后插入 --rerun（位置不影响，放在 flags 区即可）
-        command.insert(4, "--rerun")
+        command.append("--rerun")
         print(f"[🔄] --rerun 模式已启用：强制重新评估查询（忽略缓存）")
 
     command += [
-        str(output_path),
+        "--output", str(output_path),   # 刚才从全局变量拿下来的 --output 放这里
         str(db_path),
         str(ql_path)
     ]
 
     print(f"[🚀] 开始分析数据库: {db_path} 使用 QL 文件: {ql_path}")
     print(f"[ℹ️] command: {' '.join(command)}")
+    
     stdout, stderr, returncode = run_subprocess(command)
 
     if returncode != 0:
@@ -509,11 +512,11 @@ def analyze_sarif_file(file_path: Path) -> set:
                 artifact = phys.get("artifactLocation", {})
                 uri = artifact.get("uri")
                 if uri:
-                        files_in_report.add(SARIF_URI_PREFIX / uri)
+                    files_in_report.add(SARIF_URI_PREFIX / uri)
     return files_in_report
 
 def find_cases_in_juliet(filter_good: bool=True, filter_cwe: bool=True, cwe_list: list=None) -> set:
-    """统计 Juliet 测试用例数量，支持过滤良性/缺陷用例和指定 CWE 列表
+    """统计 Juliet 测试用例数量，支持过滤良性/缺陷用例和指定 CWE 列表（当前函数框架，具体实现需要根据实际目录结构适配）
 
     args:
         filter_good: 是否只统计良性用例
@@ -548,6 +551,9 @@ if __name__ == "__main__":
     parser.add_argument("--stages", default="build,analyze,report", help="逗号分隔阶段：build,analyze,report")
     parser.add_argument("--rerun", action="store_true",
                         help="强制重新运行 CodeQL 分析（使用官方 --rerun 标志），适用于修改 QL 文件后需要绕过缓存的情况")
+    # 👇 新增这一行 👇
+    parser.add_argument("--rebuild", action="store_true",
+                        help="强制重新构建 CodeQL 数据库（覆盖旧数据库），适用于修改了测试集源码或需清理环境的情况")
     args = parser.parse_args()
 
     def parse_csv_arg(raw: str) -> List[str]:
@@ -592,7 +598,8 @@ if __name__ == "__main__":
                         build_tree_cwe_db,
                         path_prefix="final",
                         cwe_id=cwe,
-                        build_type=build_type
+                        build_type=build_type,
+                        force_rebuild=args.rebuild
                     ): cwe for cwe in runnable_cwes
                 }
                 for future in as_completed(futures):
