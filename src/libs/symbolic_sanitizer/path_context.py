@@ -4,18 +4,18 @@ Path Context — batch source reading for taint path nodes.
 
 import re
 from pathlib import Path
-from typing import Optional
+
+
+
+_KEYWORDS = frozenset({
+    'if', 'else', 'for', 'while', 'do', 'switch', 'case', 'return',
+    'break', 'continue', 'goto', 'sizeof', 'typedef', 'extern',
+    'static', 'inline', 'const', 'volatile', 'register',
+})
+_FUNC_DEF_PATTERN = re.compile(r'^[\w\s\*:~]+?\b(\w+)\s*\([^;]*$')
 
 
 def find_enclosing_function(file_path: str, line_number: int) -> dict:
-    """
-    Given a file and line number, find the function definition containing that line.
-    Scans upward for a function signature, then matches braces to find the end.
-
-    Returns:
-        {"success": True, "function_name": ..., "source_code": ..., "start_line": ..., "end_line": ...}
-        or {"success": False, "error": ...}
-    """
     path = Path(file_path)
     if not path.exists():
         return {"success": False, "error": f"文件不存在: {file_path}"}
@@ -29,17 +29,6 @@ def find_enclosing_function(file_path: str, line_number: int) -> dict:
     if line_number < 1 or line_number > len(lines):
         return {"success": False, "error": f"行号超出范围: {line_number} (文件共 {len(lines)} 行)"}
 
-    # C/C++ function definition pattern: return_type func_name(
-    # Excludes control-flow keywords (if, for, while, switch, return, etc.)
-    _KEYWORDS = frozenset({
-        'if', 'else', 'for', 'while', 'do', 'switch', 'case', 'return',
-        'break', 'continue', 'goto', 'sizeof', 'typedef', 'extern',
-        'static', 'inline', 'const', 'volatile', 'register',
-    })
-    func_def_pattern = re.compile(
-        r'^[\w\s\*:~]+?\b(\w+)\s*\([^;]*$'
-    )
-
     # Scan upward from target line to find the function definition start
     target_idx = line_number - 1
     func_start = None
@@ -47,10 +36,9 @@ def find_enclosing_function(file_path: str, line_number: int) -> dict:
 
     for i in range(target_idx, -1, -1):
         line = lines[i]
-        m = func_def_pattern.match(line)
+        m = _FUNC_DEF_PATTERN.match(line)
         if not m:
             continue
-        # Exclude control-flow keywords
         if m.group(1) in _KEYWORDS:
             continue
         # Confirm it's a definition (has '{' nearby, not just a declaration ending with ';')
