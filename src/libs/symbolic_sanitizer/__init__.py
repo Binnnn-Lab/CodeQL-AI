@@ -9,7 +9,7 @@ from .sarif_parser import (
     FunctionLocation,
     TaintPath
 )
-from .harness_generator import generate_harness, compile_harness, HarnessResult
+from .harness_generator import generate_harness, compile_harness
 from .symbolic_sanitizer import (
     verify_sanitization,
     SymbolicExecutionResult,
@@ -25,7 +25,6 @@ __all__ = [
     'TaintPath',
     'generate_harness',
     'compile_harness',
-    'HarnessResult',
     'verify_sanitization',
     'SymbolicExecutionResult',
     'SymbolicExecutor',
