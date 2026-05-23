@@ -5,8 +5,12 @@ Symbolic Execution — angr-based sink reachability verification.
 import logging
 from typing import List, Dict, Any, Optional
 
-import angr
-import claripy
+try:
+    import angr
+    import claripy
+except ImportError:
+    angr = None
+    claripy = None
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
