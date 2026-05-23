@@ -40,16 +40,18 @@ Agent (由 src/libs/symbolic_sanitizer/readme.md prompt 驱动)
 | MCP Tool | 确定性原子操作：文件解析、源码读取、harness 生成、编译配置、编译、符号执行 | `src/mcptools/symbolic_sanitizer.py` → `src/libs/symbolic_sanitizer/` |
 | Agent (LLM) | 语义推理：分支分析、约束生成；首次遇到新数据集时生成 compile.sh | Agent 自身推理，由 readme.md prompt 引导 |
 
-## 3 Agent 工作流（6 步）
+## 3 Agent 工作流（7 步）
 
 ```
 Step 1: parse_sarif_detailed          → MCP Tool
 Step 2: read_path_context             → MCP Tool
-Step 3: 分支分析                       → Agent 推理（无 tool）
-Step 4: generate_harness              → MCP Tool（结构化参数驱动）
-Step 5: resolve/write compile config  → MCP Tool + Agent（仅首次）
-Step 6: compile_harness               → MCP Tool（调用 compile.sh）
-Step 7: verify_branch                  → MCP Tool
+Step 3: 分支分析 + 验证计划            → Agent 推理（输出全量 verification plan）
+                                        ┌─────── 对每个 verification_target 循环 ───────┐
+Step 4: generate_harness              │ → MCP Tool（结构化参数驱动）                     │
+Step 5: resolve/write compile config  │ → MCP Tool + Agent（仅首次，后续复用）           │
+Step 6: compile_harness               │ → MCP Tool（调用 compile.sh）                   │
+Step 7: verify_branch                 │ → MCP Tool                                      │
+                                        └────────────────────────────────────────────────┘
 ```
 
 ### Step 1: 解析 SARIF
@@ -66,57 +68,107 @@ Step 7: verify_branch                  → MCP Tool
 输入：Step 1 中路径的所有节点 `[{file_path, line_number, function_name}, ...]`（包含 source、sink、所有 intermediate）。
 输出：每个节点对应的函数完整源码。
 
-### Step 3: 分支分析（Agent 推理）
+### Step 3: 分支分析 + 生成验证计划（Agent 推理）
 
-LLM 阅读 Step 2 返回的全部源码，完成：
+LLM 阅读 Step 2 返回的全部源码，**一次性**分析所有污点路径，输出一份结构化的验证计划（verification plan）。
 
-1. 识别路径上所有与净化相关的分支条件（if/switch/循环守卫）
-2. 判断哪个分支是关键净化逻辑，标注文件+行号+条件表达式
+分析内容：
+
+1. 对每条污点路径，识别所有与净化相关的分支条件（if/switch/循环守卫）
+2. 判断哪些分支是关键净化逻辑，标注文件+行号+条件表达式
 3. 判断净化类型：判定型（branch guard）或过滤型（字符替换/删除）
 4. 根据漏洞类型（rule_id）生成攻击输入约束
-5. 给出初步判断和置信度
+5. 收集所有涉及的源文件（用于 compile.sh）和头文件（用于 harness #include）
+6. 给出每条路径的初步判断和置信度
 
-输出格式：
+**输出：验证计划 JSON**，包含全局编译信息 + 所有待验证分支列表：
 
 ```json
 {
-  "target_branch": {
-    "file": "src/validate.c",
-    "line": 25,
-    "condition": "if(strchr(input, ';') != NULL)"
+  "dataset_path": "/path/to/dataset",
+  "compile_info": {
+    "source_files": ["src/validate.c", "src/sanitizer.c", "src/process.c"],
+    "include_files": ["validate.h", "sanitizer.h"],
+    "include_dirs": ["src/", "include/"]
   },
-  "sanitization_type": "判定型",
-  "input_constraints": [
-    {"type": "contains_any", "chars": [";", "|", "&"]}
-  ],
-  "confidence": "medium",
-  "reasoning": "strchr 检查了分号但未检查管道符和 &，可能存在绕过"
+  "verification_targets": [
+    {
+      "id": "vt_001",
+      "path_id": "path_0001",
+      "rule_id": "cpp/command-line-injection",
+      "target_branch": {
+        "file": "src/validate.c",
+        "line": 25,
+        "condition": "if(strchr(input, ';') != NULL)"
+      },
+      "sanitization_type": "判定型",
+      "target_function": "validate_cmd",
+      "source_file": "src/validate.c",
+      "call_chain": [
+        "char* result = sanitize(symbolic_input);",
+        "int ok = validate_cmd(result);"
+      ],
+      "sink_expression": "system(result)",
+      "includes": ["validate.h"],
+      "input_constraints": [
+        {"type": "contains_any", "chars": [";", "|", "&"]}
+      ],
+      "confidence": "medium",
+      "reasoning": "strchr 检查了分号但未检查管道符和 &，可能存在绕过"
+    },
+    {
+      "id": "vt_002",
+      "path_id": "path_0002",
+      "rule_id": "cpp/buffer-overflow",
+      "target_branch": {
+        "file": "src/process.c",
+        "line": 42,
+        "condition": "if(strlen(input) < BUFFER_SIZE)"
+      },
+      "sanitization_type": "判定型",
+      "target_function": "process_data",
+      "source_file": "src/process.c",
+      "call_chain": [
+        "process_data(symbolic_input, output_buf);"
+      ],
+      "sink_expression": "strcpy(output_buf, input)",
+      "includes": ["process.h"],
+      "input_constraints": [
+        {"type": "length_range", "min": 129, "max": 256}
+      ],
+      "confidence": "high",
+      "reasoning": "strlen 检查了长度边界，但需验证 off-by-one"
+    }
+  ]
 }
 ```
 
-### Step 4: 生成 Harness（MCP Tool）
+**`compile_info` 的作用**：Agent 在分析源码时顺带识别出涉及哪些 .c/.h 文件和 include 目录，这些信息在 Step 5 中用于生成 compile.sh（如果不存在的话）。
 
-调用 `generate_harness(target_function, source_file, call_chain, sink_expression, includes)`。
+**后续 Step 4-7 逐条处理 `verification_targets`**，每个 target 独立走一遍 generate → compile → verify 流程。
 
-Agent 在 Step 3 中已经分析出了目标函数、调用链、sink 位置。Step 4 将这些结构化信息传给 MCP Tool，由 Tool 拼装出标准化的 C harness 代码。
+### Step 4: 生成 Harness（MCP Tool，逐条）
 
-**Agent 提供语义决策（调用什么、sink 在哪），Tool 负责可靠的代码拼装。**
+对 `verification_targets` 中的每个 target，调用 `generate_harness(target_function, source_file, call_chain, sink_expression, includes)`。
+
+Tool 根据结构化参数拼装标准 C harness 代码。**Agent 提供语义决策（调用什么、sink 在哪），Tool 负责可靠的代码拼装。**
 
 生成的 harness 结构：
 
 ```c
 #include <string.h>
-// ... includes（由参数指定）
+// ... includes（由 target.includes 指定）
 
 void __sink_reached() {}
 
 char symbolic_input[64];
 
 int main() {
-    // call_chain 中的调用序列
+    // target.call_chain 中的调用序列
     char* result = sanitize(symbolic_input);
-    if (validate(result)) {
-        __sink_reached();  // sink_expression 位置插入标记
+    int ok = validate_cmd(result);
+    if (ok) {
+        __sink_reached();  // target.sink_expression 位置插入标记
     }
     return 0;
 }
@@ -127,7 +179,7 @@ int main() {
 调用 `resolve_compile_config(dataset_path)` 检查 `{dataset}/.CodeQL-AI/compile.sh` 是否存在。
 
 - **存在** → 返回 compile.sh 路径，直接进入 Step 6
-- **不存在** → 返回 `{"found": false}`，Agent 浏览数据集结构（目录布局、include 目录、依赖文件），生成适用于整个数据集的 `compile.sh`，调用 `write_compile_config(dataset_path, script_content)` 写入
+- **不存在** → 返回 `{"found": false}` 及目录列表。Agent 结合 Step 3 验证计划中的 `compile_info`（source_files、include_files、include_dirs）生成适用于整个数据集的 `compile.sh`，调用 `write_compile_config(dataset_path, script_content)` 写入
 
 `compile.sh` 约定：接收两个参数 `<harness.c> <output_binary>`，例：
 
