@@ -67,3 +67,66 @@ class TestFindEnclosingFunction:
         result = find_enclosing_function("/nonexistent/file.c", 10)
         assert result["success"] is False
         assert "not found" in result["error"].lower() or "不存在" in result["error"]
+
+
+from libs.symbolic_sanitizer.path_context import read_path_context
+
+
+@pytest.fixture
+def multi_file_project(tmp_path):
+    """Create a small multi-file C project."""
+    (tmp_path / "input.c").write_text(
+        'char* get_user_input() {\n    char* buf = malloc(64);\n    fgets(buf, 64, stdin);\n    return buf;\n}\n'
+    )
+    (tmp_path / "validate.c").write_text(
+        'int validate_cmd(char* input) {\n    if (strchr(input, \';\') != NULL) return 0;\n    return 1;\n}\n'
+    )
+    return tmp_path
+
+
+class TestReadPathContext:
+    def test_batch_read_with_function_names(self, multi_file_project):
+        locations = [
+            {"file_path": str(multi_file_project / "input.c"), "line_number": 2, "function_name": "get_user_input"},
+            {"file_path": str(multi_file_project / "validate.c"), "line_number": 2, "function_name": "validate_cmd"},
+        ]
+        result = read_path_context(locations)
+        assert result["success"] is True
+        assert len(result["context"]) == 2
+        assert result["context"][0]["function_name"] == "get_user_input"
+        assert result["context"][1]["function_name"] == "validate_cmd"
+        assert len(result["failed"]) == 0
+
+    def test_batch_read_without_function_name(self, multi_file_project):
+        locations = [
+            {"file_path": str(multi_file_project / "validate.c"), "line_number": 2, "function_name": None},
+        ]
+        result = read_path_context(locations)
+        assert result["success"] is True
+        assert len(result["context"]) == 1
+        assert result["context"][0]["function_name"] == "validate_cmd"
+
+    def test_deduplication(self, multi_file_project):
+        locations = [
+            {"file_path": str(multi_file_project / "validate.c"), "line_number": 1, "function_name": "validate_cmd"},
+            {"file_path": str(multi_file_project / "validate.c"), "line_number": 2, "function_name": "validate_cmd"},
+        ]
+        result = read_path_context(locations)
+        assert result["success"] is True
+        assert len(result["context"]) == 1
+
+    def test_missing_file_collected_in_failed(self, multi_file_project):
+        locations = [
+            {"file_path": str(multi_file_project / "validate.c"), "line_number": 2, "function_name": "validate_cmd"},
+            {"file_path": "/nonexistent/file.c", "line_number": 10, "function_name": "foo"},
+        ]
+        result = read_path_context(locations)
+        assert result["success"] is True
+        assert len(result["context"]) == 1
+        assert len(result["failed"]) == 1
+        assert "nonexistent" in result["failed"][0]["file_path"]
+
+    def test_empty_locations(self):
+        result = read_path_context([])
+        assert result["success"] is True
+        assert len(result["context"]) == 0

@@ -4,6 +4,7 @@ Path Context — batch source reading for taint path nodes.
 
 import re
 from pathlib import Path
+from libs.lib_sanitizer.lib_sanitizer import read_function_implementation
 
 
 
@@ -86,4 +87,70 @@ def find_enclosing_function(file_path: str, line_number: int) -> dict:
         "start_line": func_start + 1,
         "end_line": func_end,
         "source_code": ''.join(lines[func_start:func_end])
+    }
+
+
+def read_path_context(locations: list) -> dict:
+    """Batch-read source context for a list of taint path locations.
+
+    Each entry in *locations* is a dict with:
+        file_path    (str)       – absolute path to the source file
+        line_number  (int)       – 1-based line number within the file
+        function_name (str|None) – optional function name hint
+
+    Returns:
+        {
+            "success": True,
+            "context": [{"file_path", "function_name", "line_number",
+                          "source_code", "start_line", "end_line"}, ...],
+            "failed":  [{"file_path", "line_number", "function_name", "reason"}, ...]
+        }
+    """
+    context: list = []
+    failed: list = []
+    seen: set = set()
+
+    for loc in locations:
+        file_path = loc.get("file_path", "")
+        line_number = loc.get("line_number", 0)
+        function_name = loc.get("function_name")
+
+        if function_name:
+            result = read_function_implementation(function_name, file_path)
+            # read_function_implementation returns success:True even when the
+            # function is treated as a lib function (no source_code key).
+            # In that case fall back to find_enclosing_function.
+            if result.get("success") and "source_code" not in result:
+                result = find_enclosing_function(file_path, line_number)
+        else:
+            result = find_enclosing_function(file_path, line_number)
+
+        if not result.get("success") or "source_code" not in result:
+            failed.append({
+                "file_path": file_path,
+                "line_number": line_number,
+                "function_name": function_name,
+                "reason": result.get("error", "unknown error"),
+            })
+            continue
+
+        fn_name = result.get("function_name") or function_name or ""
+        dedup_key = (file_path, fn_name)
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+
+        context.append({
+            "file_path": file_path,
+            "function_name": fn_name,
+            "line_number": line_number,
+            "source_code": result["source_code"],
+            "start_line": result.get("start_line"),
+            "end_line": result.get("end_line"),
+        })
+
+    return {
+        "success": True,
+        "context": context,
+        "failed": failed,
     }
