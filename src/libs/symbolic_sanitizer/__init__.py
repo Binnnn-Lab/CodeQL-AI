@@ -10,12 +10,7 @@ from .sarif_parser import (
     TaintPath
 )
 from .harness_generator import generate_harness, compile_harness
-from .symbolic_sanitizer import (
-    verify_sanitization,
-    SymbolicExecutionResult,
-    SymbolicExecutor,
-    PathAnalysisResult,
-)
+from .symbolic_sanitizer import SymbolicExecutor
 
 __all__ = [
     'parse_sarif_result',
@@ -25,8 +20,5 @@ __all__ = [
     'TaintPath',
     'generate_harness',
     'compile_harness',
-    'verify_sanitization',
-    'SymbolicExecutionResult',
     'SymbolicExecutor',
-    'PathAnalysisResult',
 ]
