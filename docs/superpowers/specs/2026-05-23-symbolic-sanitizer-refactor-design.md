@@ -26,7 +26,10 @@ Agent (由 src/libs/symbolic_sanitizer/readme.md prompt 驱动)
   └── MCP Server: symbolic_sanitizer (重构)
         ├── parse_sarif_detailed        ← 保留
         ├── read_path_context           ← 新增
-        ├── compile_harness             ← 保留，去除 Juliet 硬编码
+        ├── generate_harness            ← 重构：结构化参数驱动
+        ├── resolve_compile_config      ← 新增：数据集编译配置发现
+        ├── write_compile_config        ← 新增：写入编译配置
+        ├── compile_harness             ← 重构：调用 compile.sh
         └── verify_branch               ← 新增，替代旧验证接口
 ```
 
@@ -34,8 +37,8 @@ Agent (由 src/libs/symbolic_sanitizer/readme.md prompt 驱动)
 
 | 层 | 职责 | 实现位置 |
 |----|------|---------|
-| MCP Tool | 确定性原子操作：文件解析、源码读取、编译、符号执行 | `src/mcptools/symbolic_sanitizer.py` → `src/libs/symbolic_sanitizer/` |
-| Agent (LLM) | 语义推理：分支分析、约束生成、harness 代码生成 | Agent 自身推理，由 readme.md prompt 引导 |
+| MCP Tool | 确定性原子操作：文件解析、源码读取、harness 生成、编译配置、编译、符号执行 | `src/mcptools/symbolic_sanitizer.py` → `src/libs/symbolic_sanitizer/` |
+| Agent (LLM) | 语义推理：分支分析、约束生成；首次遇到新数据集时生成 compile.sh | Agent 自身推理，由 readme.md prompt 引导 |
 
 ## 3 Agent 工作流（6 步）
 
@@ -43,9 +46,10 @@ Agent (由 src/libs/symbolic_sanitizer/readme.md prompt 驱动)
 Step 1: parse_sarif_detailed          → MCP Tool
 Step 2: read_path_context             → MCP Tool
 Step 3: 分支分析                       → Agent 推理（无 tool）
-Step 4: 生成 harness                   → Agent 生成代码（无 tool）
-Step 5: compile_harness                → MCP Tool
-Step 6: verify_branch                  → MCP Tool
+Step 4: generate_harness              → MCP Tool（结构化参数驱动）
+Step 5: resolve/write compile config  → MCP Tool + Agent（仅首次）
+Step 6: compile_harness               → MCP Tool（调用 compile.sh）
+Step 7: verify_branch                  → MCP Tool
 ```
 
 ### Step 1: 解析 SARIF
@@ -90,41 +94,62 @@ LLM 阅读 Step 2 返回的全部源码，完成：
 }
 ```
 
-### Step 4: 生成 Harness（Agent 生成）
+### Step 4: 生成 Harness（MCP Tool）
 
-LLM 根据 Step 3 的分析结果，生成定制化的 C 测试代码。
+调用 `generate_harness(target_function, source_file, call_chain, sink_expression, includes)`。
 
-Harness 需满足：
-- 包含目标函数的调用链
-- 使用 `char symbolic_input[64]` 作为符号输入
-- 在 sink 位置插入 `__sink_reached()` 标记函数调用
-- `__sink_reached` 定义为空函数，仅作为 angr 的探测目标
+Agent 在 Step 3 中已经分析出了目标函数、调用链、sink 位置。Step 4 将这些结构化信息传给 MCP Tool，由 Tool 拼装出标准化的 C harness 代码。
 
-Harness 模板参考（Agent 可根据实际情况调整）：
+**Agent 提供语义决策（调用什么、sink 在哪），Tool 负责可靠的代码拼装。**
+
+生成的 harness 结构：
 
 ```c
 #include <string.h>
-// ... 必要的 include
+// ... includes（由参数指定）
 
 void __sink_reached() {}
 
 char symbolic_input[64];
 
 int main() {
-    // 调用路径上的函数链
+    // call_chain 中的调用序列
     char* result = sanitize(symbolic_input);
     if (validate(result)) {
-        __sink_reached();  // sink 标记
+        __sink_reached();  // sink_expression 位置插入标记
     }
     return 0;
 }
 ```
 
-### Step 5: 编译 Harness
+### Step 5: 编译配置发现（MCP Tool + Agent，仅首次）
 
-调用 `compile_harness(harness_code, source_file)`，编译 Agent 生成的 harness。
+调用 `resolve_compile_config(dataset_path)` 检查 `{dataset}/.CodeQL-AI/compile.sh` 是否存在。
 
-### Step 6: 符号执行验证
+- **存在** → 返回 compile.sh 路径，直接进入 Step 6
+- **不存在** → 返回 `{"found": false}`，Agent 浏览数据集结构（目录布局、include 目录、依赖文件），生成适用于整个数据集的 `compile.sh`，调用 `write_compile_config(dataset_path, script_content)` 写入
+
+`compile.sh` 约定：接收两个参数 `<harness.c> <output_binary>`，例：
+
+```bash
+#!/bin/bash
+# {dataset}/.CodeQL-AI/compile.sh
+gcc -O0 -g -fno-stack-protector \
+    -I ./testcasesupport \
+    "$1" \
+    ./testcasesupport/io.c \
+    -o "$2"
+```
+
+**此配置是数据集级别的**：同一数据集的所有 harness 复用同一个 compile.sh，Agent 只在首次遇到新数据集时生成。
+
+### Step 6: 编译 Harness（MCP Tool）
+
+调用 `compile_harness(harness_code, compile_script)`。
+
+Tool 将 harness_code 写入临时文件，调用 compile.sh 编译，返回二进制路径。compile_harness 本身不做任何 include path 探测或编译参数推断——所有编译逻辑由 compile.sh 决定。
+
+### Step 7: 符号执行验证（MCP Tool）
 
 调用 `verify_branch(binary_path, constraints, sink_marker, timeout)`。
 
@@ -185,30 +210,121 @@ def read_path_context(locations: list[dict]) -> dict:
 - 去重：同一函数只返回一次
 - 失败的节点收集到 `failed` 列表，不中断整体流程
 
-### 4.3 compile_harness（保留，简化）
+### 4.3 generate_harness（重构：结构化参数驱动）
 
 ```python
 @mcp.tool()
-def compile_harness(harness_code: str, source_file: str) -> dict:
+def generate_harness(
+    target_function: str,
+    source_file: str,
+    call_chain: list[str],
+    sink_expression: str,
+    includes: list[str] = []
+) -> dict:
     """
-    编译 harness 代码。
+    根据结构化参数生成 C harness 代码。
+
+    Args:
+        target_function: 目标净化函数名，如 "validate_cmd"
+        source_file: 目标函数所在源文件路径
+        call_chain: 调用序列，每个元素是一条 C 语句
+                    如 ["char* result = sanitize(symbolic_input);",
+                        "int ok = validate_cmd(result);"]
+        sink_expression: sink 调用表达式，如 "system(result)"
+                         Tool 会在此表达式前插入 __sink_reached()
+        includes: 需要 #include 的头文件列表
+                  如 ["validate.h", "sanitizer.h"]
 
     Returns:
         {
             "success": true,
-            "binary_path": "/tmp/harness_xxx/harness_bin",
-            "harness_path": "/tmp/harness_xxx/harness.cpp",
+            "harness_code": "#include ...\nvoid __sink_reached() {} ...",
             "error": null
         }
     """
 ```
 
-变更：
-- 去掉 `_find_header_file` 中对 Juliet 后缀（`_goodB2G` 等）的处理
-- 去掉 `_find_io_c` 逻辑
-- 保留通用的 include path 探测
+Tool 负责拼装固定骨架（`__sink_reached` 定义、`symbolic_input` 声明、main 函数），Agent 只提供语义信息。
 
-### 4.4 verify_branch（新增，替代旧验证接口）
+### 4.4 resolve_compile_config（新增）
+
+```python
+@mcp.tool()
+def resolve_compile_config(dataset_path: str) -> dict:
+    """
+    检查数据集是否已有编译配置。
+
+    查找路径: {dataset_path}/.CodeQL-AI/compile.sh
+
+    Returns:
+        {
+            "found": true,
+            "compile_script": "/path/to/dataset/.CodeQL-AI/compile.sh"
+        }
+        或
+        {
+            "found": false,
+            "dataset_path": "/path/to/dataset",
+            "directory_listing": ["src/", "include/", "testcasesupport/", ...]
+        }
+
+    found=false 时返回数据集顶层目录列表，辅助 Agent 分析目录结构以生成 compile.sh。
+    """
+```
+
+### 4.5 write_compile_config（新增）
+
+```python
+@mcp.tool()
+def write_compile_config(dataset_path: str, script_content: str) -> dict:
+    """
+    将 Agent 生成的 compile.sh 写入数据集配置目录。
+
+    写入路径: {dataset_path}/.CodeQL-AI/compile.sh
+    自动创建 .CodeQL-AI 目录（如不存在），自动添加可执行权限。
+
+    Args:
+        dataset_path: 数据集根目录
+        script_content: compile.sh 内容
+
+    Returns:
+        {
+            "success": true,
+            "compile_script": "/path/to/dataset/.CodeQL-AI/compile.sh"
+        }
+    """
+```
+
+### 4.6 compile_harness（重构：调用 compile.sh）
+
+```python
+@mcp.tool()
+def compile_harness(harness_code: str, compile_script: str) -> dict:
+    """
+    使用数据集的 compile.sh 编译 harness。
+
+    Args:
+        harness_code: harness C 源码
+        compile_script: compile.sh 路径（来自 resolve_compile_config）
+
+    流程:
+        1. 将 harness_code 写入临时文件 /tmp/harness_xxx/harness.c
+        2. 调用: bash {compile_script} /tmp/harness_xxx/harness.c /tmp/harness_xxx/harness_bin
+        3. 返回二进制路径
+
+    Returns:
+        {
+            "success": true,
+            "binary_path": "/tmp/harness_xxx/harness_bin",
+            "harness_path": "/tmp/harness_xxx/harness.c",
+            "error": null
+        }
+    """
+```
+
+compile_harness 本身不做任何 include path 探测或编译参数推断——所有编译逻辑由 compile.sh 决定。
+
+### 4.7 verify_branch（新增，替代旧验证接口）
 
 ```python
 @mcp.tool()
@@ -248,7 +364,8 @@ src/libs/symbolic_sanitizer/
   ├── __init__.py              # 导出公共接口
   ├── sarif_parser.py          # 保留，删除 parse_sarif 简版函数
   ├── path_context.py          # 新建：read_path_context 逻辑
-  ├── harness_generator.py     # 简化：只保留 compile_harness
+  ├── harness_generator.py     # 重构：generate_harness（结构化参数）+ compile_harness（调用 compile.sh）
+  ├── compile_config.py        # 新建：resolve_compile_config + write_compile_config
   ├── symbolic_sanitizer.py    # 重构：去掉 I/O 对比，改为 sink 可达性
   ├── verifier.py              # 保留
   └── readme.md                # 重写：新工作流 prompt
@@ -325,9 +442,11 @@ def find_enclosing_function(file_path: str, line_number: int) -> dict:
 | `symbolic_sanitizer.py` 中 `_extract_dangerous_chars_from_constraints()` | I/O 对比专用 |
 | `symbolic_sanitizer.py` 中 `PathAnalysisResult` 数据类 | I/O 对比专用 |
 | `symbolic_sanitizer.py` 中 `SymbolicExecutionResult` 数据类 | 用新的返回 dict 替代 |
-| `harness_generator.py` 中 `generate_harness()` | harness 改由 Agent 生成 |
-| `harness_generator.py` 中 `_find_header_file()` | Juliet 专用逻辑 |
-| `harness_generator.py` 中 `_find_io_c()` | Juliet 专用逻辑 |
+| `harness_generator.py` 中 `generate_harness()` | 用结构化参数版本重写 |
+| `harness_generator.py` 中 `_find_header_file()` | Juliet 专用逻辑，由 compile.sh 替代 |
+| `harness_generator.py` 中 `_find_io_c()` | Juliet 专用逻辑，由 compile.sh 替代 |
+| `harness_generator.py` 中 `_detect_include_paths()` | 由 compile.sh 替代 |
+| `harness_generator.py` 中 `compile_harness()` 旧签名 | 用 compile_script 参数版本重写 |
 | `sarif_parser.py` 中 `parse_sarif_result()` | 只保留 detailed 版本 |
 | `mcptools/symbolic_sanitizer.py` 中 `parse_sarif()` tool | 只保留 detailed 版本 |
 | `mcptools/symbolic_sanitizer.py` 中 `generate_harness()` tool | 改由 Agent 生成 |
@@ -346,7 +465,8 @@ def find_enclosing_function(file_path: str, line_number: int) -> dict:
 | `test_step2_find_potential_functions.py` | 保留（属于 function_level_sanitizer） |
 | `test_step3_function_selector_skill.py` | 删除（function-selector skill 不再使用） |
 | `test_step4_constraint_generator_skill.py` | 删除（constraint-generator skill 不再使用） |
-| `test_step5_harness_generation.py` | 重构：测试 compile_harness（不含 generate） |
+| `test_step5_harness_generation.py` | 重构：测试 generate_harness（结构化参数）+ compile_harness（compile.sh） |
 | `test_step6_verify_with_constraints.py` | 重构：测试 verify_branch |
 | 新增 `test_read_path_context.py` | read_path_context 单元测试 |
+| 新增 `test_compile_config.py` | resolve/write_compile_config 单元测试 |
 | 新增 `test_verify_branch.py` | verify_branch 集成测试 |
