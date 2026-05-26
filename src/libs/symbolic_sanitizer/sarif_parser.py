@@ -36,6 +36,25 @@ def extract_taint_paths(sarif_data: dict) -> List[TaintPath]:
             message = result.get("message", {}).get("text", "")
 
             code_flows = result.get("codeFlows", [])
+
+            if not code_flows:
+                primary_locs = result.get("locations", [])
+                related = result.get("relatedLocations", [])
+                if primary_locs and related:
+                    sink_node = _parse_location_node(primary_locs[0])
+                    source_node = _parse_location_node(related[0])
+                    if sink_node and source_node:
+                        path_counter += 1
+                        taint_paths.append(TaintPath(
+                            path_id=f"path_{path_counter:04d}",
+                            source=source_node,
+                            sink=sink_node,
+                            intermediate_locations=[],
+                            rule_id=rule_id,
+                            message=message,
+                        ))
+                continue
+
             for code_flow in code_flows:
                 thread_flows = code_flow.get("threadFlows", [])
                 for thread_flow in thread_flows:
@@ -70,11 +89,19 @@ def extract_taint_paths(sarif_data: dict) -> List[TaintPath]:
 
 
 def _parse_location_node(location_data: dict) -> Optional[dict]:
-    """Parse a single location node from threadFlow locations."""
-    physical = location_data.get("physicalLocation", {})
+    """Parse a single location node from threadFlow locations.
+
+    SARIF threadFlow location entries wrap the actual location under a `location` key:
+        { "location": { "physicalLocation": {...}, "logicalLocations": [...], "message": {...} } }
+    Fall back to treating the entry itself as the location for tolerance.
+    """
+    inner = location_data.get("location", location_data)
+    physical = inner.get("physicalLocation", {})
     artifact = physical.get("artifactLocation", {})
     region = physical.get("region", {})
-    logical = location_data.get("logicalLocation", {})
+    logical_list = inner.get("logicalLocations", [])
+    logical = logical_list[0] if logical_list else inner.get("logicalLocation", {})
+    message = inner.get("message", {}).get("text") if isinstance(inner.get("message"), dict) else None
 
     file_path = artifact.get("uri", "")
     line_number = region.get("startLine", 0)
@@ -86,5 +113,6 @@ def _parse_location_node(location_data: dict) -> Optional[dict]:
         "file_path": file_path,
         "line_number": line_number,
         "function_name": logical.get("name") or logical.get("fullyQualifiedName"),
-        "column": region.get("startColumn")
+        "column": region.get("startColumn"),
+        "message": message,
     }

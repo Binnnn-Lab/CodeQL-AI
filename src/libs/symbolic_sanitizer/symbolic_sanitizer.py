@@ -35,12 +35,21 @@ class SymbolicExecutor:
             if not sink_addr:
                 return self._error_result(f"{sink_marker} function not found in binary")
 
-            sym_bytes = [claripy.BVS(f'byte_{i}', 8) for i in range(64)]
-            input_addr = 0x500000
+            input_addr = self._find_symbol_address("symbolic_input")
+            if not input_addr:
+                return self._error_result(
+                    "Global symbol 'symbolic_input' not found in binary. "
+                    "The harness must declare `char symbolic_input[64]` (or similar) so the "
+                    "symbolic executor can inject symbolic bytes at its address."
+                )
 
-            state = self.project.factory.call_state(main_addr, input_addr)
+            buf_size = constraints.get("buffer_size", 64)
+            sym_bytes = [claripy.BVS(f'byte_{i}', 8) for i in range(buf_size)]
+
+            state = self.project.factory.call_state(main_addr)
             for i, b in enumerate(sym_bytes):
                 state.memory.store(input_addr + i, b)
+            logger.info(f"Injected {buf_size} symbolic bytes at symbolic_input=0x{input_addr:x}")
 
             input_constraints = constraints.get("input_constraints", [])
             self.apply_input_constraints(state, sym_bytes, input_constraints)
@@ -91,6 +100,18 @@ class SymbolicExecutor:
             logger.error(f"Reachability analysis failed: {e}")
             return self._error_result(str(e))
 
+    def _find_symbol_address(self, name: str) -> Optional[int]:
+        try:
+            symbol = self.project.loader.find_symbol(name)
+            if symbol:
+                return symbol.rebased_addr
+        except Exception:
+            pass
+        for sym in self.project.loader.symbols:
+            if sym.name == name:
+                return sym.rebased_addr
+        return None
+
     def _find_function(self, name: str) -> Optional[int]:
         try:
             symbol = self.project.loader.find_symbol(name)
@@ -107,24 +128,37 @@ class SymbolicExecutor:
     def apply_input_constraints(
         self, state, sym_bytes: List, input_constraints: List[Dict]
     ) -> None:
-        constraint = self._build_input_constraint(sym_bytes, input_constraints)
-        state.solver.add(constraint)
-
-    def _build_input_constraint(self, sym_bytes: List, input_constraints: List[Dict]):
-        combined = []
         for c in input_constraints:
             ctype = c.get("type")
             if ctype == "contains_any":
                 chars = c.get("chars", [])
                 if chars:
-                    combined.append(self._build_contains_any_constraint(sym_bytes, chars))
+                    state.solver.add(self._build_contains_any_constraint(sym_bytes, chars))
             elif ctype == "length_range":
                 min_len = c.get("min", 0)
                 max_len = c.get("max", len(sym_bytes))
-                combined.append(self._build_length_range_constraint(sym_bytes, min_len, max_len))
-        if combined:
-            return claripy.And(*combined)
-        return claripy.true
+                lc = self._build_length_range_constraint(sym_bytes, min_len, max_len)
+                if lc is not None:
+                    state.solver.add(lc)
+            elif ctype == "uint_ge":
+                offset = int(c.get("offset", 0))
+                value = int(c.get("value"))
+                width = int(c.get("width", 4))
+                state.solver.add(self._build_uint_compare(sym_bytes, offset, width, ">=", value))
+            elif ctype == "uint_eq":
+                offset = int(c.get("offset", 0))
+                value = int(c.get("value"))
+                width = int(c.get("width", 4))
+                state.solver.add(self._build_uint_compare(sym_bytes, offset, width, "==", value))
+            elif ctype == "uint_le":
+                offset = int(c.get("offset", 0))
+                value = int(c.get("value"))
+                width = int(c.get("width", 4))
+                state.solver.add(self._build_uint_compare(sym_bytes, offset, width, "<=", value))
+            elif ctype == "byte_eq":
+                offset = int(c.get("offset", 0))
+                value = int(c.get("value"))
+                state.solver.add(sym_bytes[offset] == value)
 
     def _build_contains_any_constraint(self, sym_bytes: List, chars: List[str]):
         char_vals = [ord(ch[0]) if len(ch) > 0 else ord(' ') for ch in chars]
@@ -144,7 +178,28 @@ class SymbolicExecutor:
             constraints.append(sym_bytes[max_len] == 0)
         if constraints:
             return claripy.And(*constraints)
-        return claripy.true
+        return None
+
+    def _build_uint_compare(self, sym_bytes: List, offset: int, width: int, op: str, value: int):
+        """Build a constraint treating sym_bytes[offset:offset+width] as a little-endian unsigned int.
+
+        sym_bytes are 8-bit BVs. Little-endian: bytes_le[0] is the LSB. claripy.Concat puts
+        its first argument in the high bits, so we reverse the byte order before Concat to
+        produce an (8*width)-bit composed value with the correct endianness.
+        """
+        bytes_le = sym_bytes[offset:offset + width]
+        composed = claripy.Concat(*reversed(bytes_le))
+        if op == ">=":
+            return claripy.UGE(composed, value)
+        if op == "<=":
+            return claripy.ULE(composed, value)
+        if op == ">":
+            return claripy.UGT(composed, value)
+        if op == "<":
+            return claripy.ULT(composed, value)
+        if op == "==":
+            return composed == value
+        raise ValueError(f"unsupported op: {op}")
 
     @staticmethod
     def _error_result(error: str) -> dict:

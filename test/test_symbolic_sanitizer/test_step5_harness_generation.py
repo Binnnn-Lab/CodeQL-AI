@@ -24,7 +24,7 @@ class TestGenerateHarness:
         )
         assert result["success"] is True
         code = result["harness_code"]
-        assert 'void __sink_reached()' in code
+        assert 'void __sink_reached(void)' in code
         assert 'char symbolic_input[64]' in code
         assert 'sanitize(symbolic_input)' in code
         assert 'validate_cmd(result)' in code
@@ -79,10 +79,11 @@ int main() {
     return 0;
 }
 """
-        result = compile_harness(harness_code, str(script))
+        result = compile_harness(harness_code, str(script), "src/foo.c")
         assert result["success"] is True
         assert result["binary_path"] is not None
         assert os.path.exists(result["binary_path"])
+        assert result["harness_path"].endswith(".c")
 
     def test_compilation_failure(self, tmp_path):
         script = tmp_path / "compile.sh"
@@ -90,10 +91,32 @@ int main() {
         script.chmod(script.stat().st_mode | stat.S_IEXEC)
 
         harness_code = "THIS IS NOT VALID C CODE @@@@"
-        result = compile_harness(harness_code, str(script))
+        result = compile_harness(harness_code, str(script), "src/foo.c")
         assert result["success"] is False
         assert result["error"] is not None
 
     def test_missing_compile_script(self):
-        result = compile_harness("int main(){}", "/nonexistent/compile.sh")
+        result = compile_harness("int main(){}", "/nonexistent/compile.sh", "src/foo.c")
         assert result["success"] is False
+
+    def test_cpp_extension_inferred(self, tmp_path):
+        """target_file with .cpp suffix produces a .cpp harness and passes 'cpp' to compile.sh."""
+        script = tmp_path / "compile.sh"
+        # Script asserts: harness file ends with .cpp AND $3 == 'cpp'.
+        script.write_text(
+            "#!/bin/bash\n"
+            "case \"$1\" in *.cpp) ;; *) echo 'bad ext'; exit 2;; esac\n"
+            "[ \"$3\" = \"cpp\" ] || { echo \"bad lang: $3\"; exit 3; }\n"
+            "g++ -O0 -g \"$1\" -o \"$2\"\n"
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+
+        harness_code = """
+extern "C" { void __sink_reached(); }
+void __sink_reached() {}
+char symbolic_input[64];
+int main() { __sink_reached(); return 0; }
+"""
+        result = compile_harness(harness_code, str(script), "src/foo.cpp")
+        assert result["success"] is True, result["error"]
+        assert result["harness_path"].endswith(".cpp")

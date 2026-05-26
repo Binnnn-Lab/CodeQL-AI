@@ -32,11 +32,16 @@ class TestExecuteReachability:
         mock_sink_symbol = MagicMock()
         mock_sink_symbol.rebased_addr = 0x400100
 
+        mock_input_symbol = MagicMock()
+        mock_input_symbol.rebased_addr = 0x500000
+
         def find_symbol_side_effect(name):
             if name == "main":
                 return mock_symbol
             if name == "__sink_reached":
                 return mock_sink_symbol
+            if name == "symbolic_input":
+                return mock_input_symbol
             return None
         mock_project.loader.find_symbol.side_effect = find_symbol_side_effect
 
@@ -77,11 +82,16 @@ class TestExecuteReachability:
         mock_sink_symbol = MagicMock()
         mock_sink_symbol.rebased_addr = 0x400100
 
+        mock_input_symbol = MagicMock()
+        mock_input_symbol.rebased_addr = 0x500000
+
         def find_symbol_side_effect(name):
             if name == "main":
                 return mock_symbol
             if name == "__sink_reached":
                 return mock_sink_symbol
+            if name == "symbolic_input":
+                return mock_input_symbol
             return None
         mock_project.loader.find_symbol.side_effect = find_symbol_side_effect
 

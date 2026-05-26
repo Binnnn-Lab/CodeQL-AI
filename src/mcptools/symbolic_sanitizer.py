@@ -121,9 +121,13 @@ def write_compile_config(dataset_path: str, script_content: str) -> dict:
 
 
 @mcp.tool()
-def compile_harness(harness_code: str, compile_script: str) -> dict:
-    """Compile harness code using dataset's compile.sh."""
-    return _compile_harness(harness_code, compile_script)
+def compile_harness(harness_code: str, compile_script: str, target_file: str) -> dict:
+    """Compile harness code using dataset's compile.sh.
+
+    `target_file` is the source file holding the target function (from SARIF);
+    its extension decides whether the harness is compiled as C or C++.
+    """
+    return _compile_harness(harness_code, compile_script, target_file)
 
 
 @mcp.tool()
