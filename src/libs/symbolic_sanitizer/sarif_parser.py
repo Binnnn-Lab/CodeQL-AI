@@ -89,10 +89,14 @@ def extract_taint_paths(sarif_data: dict) -> List[TaintPath]:
     return taint_paths
 
 
-def parse_sarif(sarif_path: str, dataset_root: str) -> dict:
+def parse_sarif(sarif_path: str, dataset_root: str,
+                output_dir: str | None = None) -> dict:
     """Parse SARIF, join paths to absolute, attach enclosing-function source for
-    every (file, function) appearing on any path. Single entrypoint — replaces
-    the old parse_sarif_detailed + read_path_context pair.
+    every (file, function) appearing on any path.
+
+    Saves each path as a separate JSON file under ``output_dir`` (defaults to
+    ``{sarif_path}_paths/``) and returns a lightweight summary so the agent
+    can pick paths without loading all of them into context at once.
     """
     from .path_context import find_enclosing_function
 
@@ -109,6 +113,10 @@ def parse_sarif(sarif_path: str, dataset_root: str) -> dict:
     except Exception as e:
         return {"success": False, "error": f"Failed to extract taint paths: {e}"}
 
+    if output_dir is None:
+        output_dir = os.path.splitext(sarif_path)[0] + "_paths"
+    os.makedirs(output_dir, exist_ok=True)
+
     def _absify(node: dict) -> dict:
         rel = node.get("file_path", "")
         if rel and not os.path.isabs(rel):
@@ -116,7 +124,7 @@ def parse_sarif(sarif_path: str, dataset_root: str) -> dict:
             node["file_path"] = os.path.normpath(os.path.join(dataset_root, rel))
         return node
 
-    out_paths = []
+    index = []
     for tp in taint_paths:
         source = _absify(tp.source)
         sink = _absify(tp.sink)
@@ -140,7 +148,7 @@ def parse_sarif(sarif_path: str, dataset_root: str) -> dict:
                 "end_line": res.get("end_line"),
             })
 
-        out_paths.append({
+        path_obj = {
             "path_id": tp.path_id,
             "rule_id": tp.rule_id,
             "message": tp.message,
@@ -148,9 +156,36 @@ def parse_sarif(sarif_path: str, dataset_root: str) -> dict:
             "sink": sink,
             "intermediate_locations": intermediates,
             "function_sources": list(sources_by_key.values()),
+        }
+
+        # Save individual path file
+        path_file = os.path.join(output_dir, f"{tp.path_id}.json")
+        with open(path_file, "w", encoding="utf-8") as f:
+            json.dump(path_obj, f, ensure_ascii=False, indent=2)
+
+        index.append({
+            "path_id": tp.path_id,
+            "path_file": path_file,
+            "rule_id": tp.rule_id,
+            "source_file": source.get("file_path", ""),
+            "source_line": source.get("line_number", 0),
+            "source_function": source.get("function_name"),
+            "sink_file": sink.get("file_path", ""),
+            "sink_line": sink.get("line_number", 0),
+            "sink_function": sink.get("function_name"),
         })
 
-    return {"success": True, "count": len(out_paths), "paths": out_paths}
+    # Save index for external consumers
+    index_file = os.path.join(output_dir, "_index.json")
+    with open(index_file, "w", encoding="utf-8") as f:
+        json.dump({"count": len(index), "paths": index}, f, ensure_ascii=False, indent=2)
+
+    return {
+        "success": True,
+        "count": len(index),
+        "paths_dir": output_dir,
+        "index_file": index_file,
+    }
 
 
 def _parse_location_node(location_data: dict) -> Optional[dict]:
