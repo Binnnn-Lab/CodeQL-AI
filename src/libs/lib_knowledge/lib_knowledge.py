@@ -17,6 +17,22 @@ CONFIDENCE_ORDER = {
     "high": 3,
 }
 
+FP_TYPE_VALUES = frozenset({
+    "missing_internal_call_sanitizer",
+    "missing_guard_barrier",
+    "wrong_pattern_match",
+    "overly_broad_source",
+    "overly_broad_sink",
+    "type_mismatch_in_condition",
+})
+
+TRANSITION_TRIGGERS = frozenset({
+    "function_call",
+    "guard_condition",
+    "assignment",
+    "variable_declaration",
+})
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -110,6 +126,50 @@ def _required_string(value: Any, field_name: str) -> Optional[str]:
     return text
 
 
+def _normalize_fp_fields(experience: Dict[str, Any]) -> None:
+    fp_type = _required_string(experience.get("fp_type"), "fp_type")
+    if fp_type:
+        normalized = fp_type.strip().lower().replace(" ", "_")
+        if normalized not in FP_TYPE_VALUES:
+            raise ValueError(
+                f"fp_type '{fp_type}' is not valid; must be one of: {', '.join(sorted(FP_TYPE_VALUES))}"
+            )
+        experience["fp_type"] = normalized
+
+    initial_states = experience.get("initial_states")
+    if initial_states:
+        if not isinstance(initial_states, list) or not all(isinstance(s, str) for s in initial_states):
+            raise ValueError("initial_states must be a list of strings")
+        experience["initial_states"] = initial_states
+
+    states = experience.get("states")
+    if states:
+        if not isinstance(states, list):
+            raise ValueError("states must be a list of objects")
+        for s in states:
+            if not isinstance(s, dict):
+                raise ValueError("each entry in states must be a dict with 'name' and optionally 'description'")
+            if "name" not in s:
+                raise ValueError("each state entry must have a 'name' field")
+        experience["states"] = states
+
+    transitions = experience.get("transitions")
+    if transitions:
+        if not isinstance(transitions, list):
+            raise ValueError("transitions must be a list of objects")
+        for t in transitions:
+            if not isinstance(t, dict):
+                raise ValueError("each transition must be a dict")
+            trigger = t.get("trigger", "")
+            if trigger and trigger not in TRANSITION_TRIGGERS:
+                raise ValueError(
+                    f"transition trigger '{trigger}' not valid; must be one of: {', '.join(sorted(TRANSITION_TRIGGERS))}"
+                )
+            if not t.get("target"):
+                raise ValueError("each transition must have a 'target' field")
+        experience["transitions"] = transitions
+
+
 def _normalize_experience(pattern: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(pattern, dict):
         raise ValueError("pattern must be a JSON object")
@@ -127,6 +187,17 @@ def _normalize_experience(pattern: Dict[str, Any]) -> Dict[str, Any]:
         function_name = _required_string(matcher.get("function_name"), "matcher.function_name")
     if exp_type == "call_sanitizer" and not function_name:
         raise ValueError("function_name is required for call_sanitizer experience")
+
+    if exp_type == "false_positive":
+        pattern_summary = _required_string(experience.get("pattern_summary"), "pattern_summary")
+        root_cause = _required_string(experience.get("root_cause"), "root_cause")
+        if not pattern_summary:
+            raise ValueError("pattern_summary is required for false_positive experience")
+        if not root_cause:
+            raise ValueError("root_cause is required for false_positive experience")
+        experience["pattern_summary"] = pattern_summary
+        experience["root_cause"] = root_cause
+        _normalize_fp_fields(experience)
 
     now = _utc_now()
     experience["id"] = _required_string(experience.get("id"), "id") or f"exp-{uuid.uuid4().hex}"
