@@ -211,3 +211,19 @@ __marimo__/
 
 # VS Code settings and extensions
 .vscode/
+
+.sisyphus/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+
+output
+
+.mcp.json

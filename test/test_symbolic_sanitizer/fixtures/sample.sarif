@@ -1,0 +1,342 @@
+{
+  "version": "2.1.0",
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "CodeQL",
+          "organization": "GitHub",
+          "semanticVersion": "2.15.0",
+          "rules": [
+            {
+              "id": "cpp/tainted-data-flow",
+              "name": "TaintedDataFlow",
+              "shortDescription": {
+                "text": "Tainted data flows to vulnerable sink"
+              },
+              "fullDescription": {
+                "text": "This query tracks user-controlled data (taint) as it flows through the program to potentially vulnerable sinks."
+              }
+            },
+            {
+              "id": "cpp/buffer-overflow",
+              "name": "BufferOverflow",
+              "shortDescription": {
+                "text": "Buffer overflow vulnerability"
+              }
+            }
+          ]
+        }
+      },
+      "artifacts": [
+        {
+          "location": {
+            "uri": "src/input.c"
+          },
+          "sourceLanguage": "c"
+        },
+        {
+          "location": {
+            "uri": "src/processing.c"
+          },
+          "sourceLanguage": "c"
+        },
+        {
+          "location": {
+            "uri": "src/vuln.c"
+          },
+          "sourceLanguage": "c"
+        },
+        {
+          "location": {
+            "uri": "src/buffer.c"
+          },
+          "sourceLanguage": "c"
+        },
+        {
+          "location": {
+            "uri": "src/main.c"
+          },
+          "sourceLanguage": "c"
+        }
+      ],
+      "results": [
+        {
+          "ruleId": "cpp/tainted-data-flow",
+          "ruleIndex": 0,
+          "message": {
+            "text": "Tainted data reaches vulnerable sink: user input flows to memcpy without proper validation"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/vuln.c",
+                  "index": 2
+                },
+                "region": {
+                  "startLine": 50,
+                  "startColumn": 10,
+                  "endLine": 50,
+                  "endColumn": 45
+                }
+              },
+              "logicalLocation": {
+                "fullyQualifiedName": "vulnerable_function",
+                "name": "vulnerable_function"
+              }
+            }
+          ],
+          "codeFlows": [
+            {
+              "message": {
+                "text": "Tainted data flow path"
+              },
+              "threadFlows": [
+                {
+                  "message": {
+                    "text": "Data flow from source to sink"
+                  },
+                  "locations": [
+                    {
+                      "physicalLocation": {
+                        "artifactLocation": {
+                          "uri": "src/input.c",
+                          "index": 0
+                        },
+                        "region": {
+                          "startLine": 20,
+                          "startColumn": 15,
+                          "endLine": 20,
+                          "endColumn": 40
+                        }
+                      },
+                      "logicalLocation": {
+                        "fullyQualifiedName": "get_user_input",
+                        "name": "get_user_input"
+                      },
+                      "message": {
+                        "text": "Source: User input obtained here"
+                      }
+                    },
+                    {
+                      "physicalLocation": {
+                        "artifactLocation": {
+                          "uri": "src/processing.c",
+                          "index": 1
+                        },
+                        "region": {
+                          "startLine": 35,
+                          "startColumn": 8,
+                          "endLine": 35,
+                          "endColumn": 35
+                        }
+                      },
+                      "logicalLocation": {
+                        "fullyQualifiedName": "process_data",
+                        "name": "process_data"
+                      },
+                      "message": {
+                        "text": "Intermediate: Data processed here"
+                      }
+                    },
+                    {
+                      "physicalLocation": {
+                        "artifactLocation": {
+                          "uri": "src/vuln.c",
+                          "index": 2
+                        },
+                        "region": {
+                          "startLine": 50,
+                          "startColumn": 10,
+                          "endLine": 50,
+                          "endColumn": 45
+                        }
+                      },
+                      "logicalLocation": {
+                        "fullyQualifiedName": "vulnerable_function",
+                        "name": "vulnerable_function"
+                      },
+                      "message": {
+                        "text": "Sink: Vulnerable operation using tainted data"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "properties": {
+            "severity": "high",
+            "confidence": "high"
+          }
+        },
+        {
+          "ruleId": "cpp/buffer-overflow",
+          "ruleIndex": 1,
+          "message": {
+            "text": "Buffer overflow vulnerability: strcpy used with potentially unchecked buffer"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/buffer.c",
+                  "index": 3
+                },
+                "region": {
+                  "startLine": 75,
+                  "startColumn": 5,
+                  "endLine": 75,
+                  "endColumn": 30
+                }
+              },
+              "logicalLocation": {
+                "fullyQualifiedName": "unsafe_copy",
+                "name": "unsafe_copy"
+              }
+            }
+          ],
+          "codeFlows": [
+            {
+              "message": {
+                "text": "Buffer overflow flow path"
+              },
+              "threadFlows": [
+                {
+                  "message": {
+                    "text": "Data flow to unsafe buffer operation"
+                  },
+                  "locations": [
+                    {
+                      "physicalLocation": {
+                        "artifactLocation": {
+                          "uri": "src/main.c",
+                          "index": 4
+                        },
+                        "region": {
+                          "startLine": 10,
+                          "startColumn": 20,
+                          "endLine": 10,
+                          "endColumn": 50
+                        }
+                      },
+                      "logicalLocation": {
+                        "fullyQualifiedName": "main",
+                        "name": "main"
+                      },
+                      "message": {
+                        "text": "Source: Input read in main"
+                      }
+                    },
+                    {
+                      "physicalLocation": {
+                        "artifactLocation": {
+                          "uri": "src/buffer.c",
+                          "index": 3
+                        },
+                        "region": {
+                          "startLine": 75,
+                          "startColumn": 5,
+                          "endLine": 75,
+                          "endColumn": 30
+                        }
+                      },
+                      "logicalLocation": {
+                        "fullyQualifiedName": "unsafe_copy",
+                        "name": "unsafe_copy"
+                      },
+                      "message": {
+                        "text": "Sink: Buffer overflow risk"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "properties": {
+            "severity": "critical",
+            "confidence": "medium"
+          }
+        },
+        {
+          "ruleId": "cpp/format-string",
+          "ruleIndex": 2,
+          "message": {
+            "text": "Format string vulnerability detected"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/format.c"
+                },
+                "region": {
+                  "startLine": 42,
+                  "startColumn": 12
+                }
+              },
+              "logicalLocation": {
+                "name": "print_message"
+              }
+            }
+          ],
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "physicalLocation": {
+                        "artifactLocation": {
+                          "uri": "src/input.c"
+                        },
+                        "region": {
+                          "startLine": 25,
+                          "startColumn": 10
+                        }
+                      },
+                      "logicalLocation": {
+                        "name": "read_input"
+                      }
+                    },
+                    {
+                      "physicalLocation": {
+                        "artifactLocation": {
+                          "uri": "src/validate.c"
+                        },
+                        "region": {
+                          "startLine": 30,
+                          "startColumn": 15
+                        }
+                      },
+                      "logicalLocation": {
+                        "name": "validate_string"
+                      }
+                    },
+                    {
+                      "physicalLocation": {
+                        "artifactLocation": {
+                          "uri": "src/format.c"
+                        },
+                        "region": {
+                          "startLine": 42,
+                          "startColumn": 12
+                        }
+                      },
+                      "logicalLocation": {
+                        "name": "print_message"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
