@@ -310,3 +310,14 @@ def two_branches_binary():
             check=True,
         )
     return binary
+
+
+@pytest.fixture(scope="session")
+def two_branches_no_marker_binary():
+    binary = os.path.join(FIXTURES, "two_branches_no_marker")
+    if not os.path.exists(binary):
+        subprocess.run(
+            ["bash", os.path.join(FIXTURES, "compile_fixtures.sh")],
+            check=True,
+        )
+    return binary

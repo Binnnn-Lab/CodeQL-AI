@@ -15,7 +15,7 @@ documented attack, using path-guided selective symbolic execution.
 | Tool | Purpose |
 |------|---------|
 | `parse_sarif(sarif_path, dataset_root)` | Returns taint paths with absolute file paths and enclosing-function source code for every node. |
-| `build_harness(source_file, vuln_entry, source_api, compile_script, entry_signature)` | Compiles a template harness linked with the original source file. Returns `binary_path`, `source_mode`, `dwarf_ok`. |
+| `build_binary(source_file, source_api, compile_script)` | Compiles the original source file into a debuggable binary. Returns `binary_path`, `source_mode`, `dwarf_ok`. |
 | `scan_path_branches(binary_path, path, source_mode)` | Enumerates tainted branch conditions along the path. Returns `tainted_branches[]` (id, file, line, `condition_src`, surrounding 5 lines, taint vars). |
 | `verify_with_decisions(binary_path, path, source_mode, branch_decisions, attack_predicate)` | Re-executes the path, enforces guards for branches you marked `true`, applies the attack predicate, explores to sink. Returns `reachable`, `counterexample`. |
 | `resolve_compile_config(dataset_path)` | Finds an existing `compile.sh` under the dataset. |
@@ -27,7 +27,7 @@ documented attack, using path-guided selective symbolic execution.
 parse_sarif -> paths[]
 for each path:
     resolve compile.sh (write if missing, default template OK)
-    build_harness                 (template only — you don't write C)
+    build_binary                  (compile original source; no harness required)
     scan_path_branches -> tainted_branches[]
     -- YOUR DECISION --
     For each tainted_branch decide include / exclude based on whether the

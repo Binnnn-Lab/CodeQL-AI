@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from fastmcp import FastMCP
 from libs.symbolic_sanitizer import (
     parse_sarif as _parse_sarif,
+    build_binary as _build_binary,
     build_harness as _build_harness,
     scan_path_branches as _scan_path_branches,
     verify_with_decisions as _verify_with_decisions,
@@ -20,7 +21,7 @@ mcp = FastMCP(
     name="symbolic_sanitizer",
     instructions=(
         "Path-guided selective symbolic execution. Workflow: "
-        "parse_sarif -> build_harness -> scan_path_branches -> "
+        "parse_sarif -> build_binary -> scan_path_branches -> "
         "(agent decides branch include/exclude + attack predicate) -> "
         "verify_with_decisions."
     ),
@@ -34,9 +35,15 @@ def parse_sarif(sarif_path: str, dataset_root: str) -> dict:
 
 
 @mcp.tool()
+def build_binary(source_file: str, source_api: str, compile_script: str) -> dict:
+    """Compile the original source file into a debuggable analysis binary."""
+    return _build_binary(source_file, source_api, compile_script)
+
+
+@mcp.tool()
 def build_harness(source_file: str, vuln_entry: str, source_api: str,
                   compile_script: str, entry_signature: str = "void") -> dict:
-    """Compile a template harness linked with the original source file."""
+    """Compatibility wrapper: compile a template harness linked with source."""
     return _build_harness(source_file, vuln_entry, source_api,
                           compile_script, entry_signature=entry_signature)
 

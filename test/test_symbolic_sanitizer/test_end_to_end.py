@@ -10,7 +10,7 @@ from libs.symbolic_sanitizer import (
     build_harness,
     scan_path_branches,
     verify_with_decisions,
-    DEFAULT_COMPILE_SH,
+    DEFAULT_HARNESS_COMPILE_SH,
 )
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -105,7 +105,7 @@ class TestEndToEndFlow:
         )
 
         compile_sh = tmp_path / "compile.sh"
-        compile_sh.write_text(DEFAULT_COMPILE_SH)
+        compile_sh.write_text(DEFAULT_HARNESS_COMPILE_SH)
         compile_sh.chmod(0o755)
 
         r = build_harness(

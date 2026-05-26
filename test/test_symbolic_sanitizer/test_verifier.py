@@ -50,3 +50,29 @@ def test_verify_unreachable_with_attack_predicate(two_branches_binary):
     )
     assert r["success"] is True
     assert r["reachable"] is False
+
+
+def test_verify_uses_real_sink_line_without_marker(two_branches_no_marker_binary):
+    path = {
+        "source": {
+            "file_path": os.path.join(FIX, "two_branches_no_marker.c"),
+            "line_number": 8,
+            "function_name": "vuln_entry",
+        },
+        "sink": {
+            "file_path": os.path.join(FIX, "two_branches_no_marker.c"),
+            "line_number": 15,
+            "function_name": "vuln_entry",
+        },
+        "intermediate_locations": [],
+    }
+    r = verify_with_decisions(
+        binary_path=two_branches_no_marker_binary,
+        path=path,
+        source_mode="libc_stdin",
+        branch_decisions={},
+        attack_predicate=None,
+    )
+    assert r["success"] is True
+    assert r["reachable"] is True
+    assert r.get("degraded") is None

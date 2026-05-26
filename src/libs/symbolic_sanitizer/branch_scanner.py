@@ -5,7 +5,7 @@ import os
 from typing import Dict, Any
 
 from .path_executor import PathExecutor
-from .dwarf_resolver import addr_to_line, func_entry
+from .dwarf_resolver import addr_to_line, func_entry, nearest_line_addr
 
 
 def _read_source_line(file_path: str, line: int, context: int = 2) -> Dict[str, str]:
@@ -20,6 +20,22 @@ def _read_source_line(file_path: str, line: int, context: int = 2) -> Dict[str, 
     hi = min(len(lines), line - 1 + context + 1)
     surrounding = "".join(lines[lo:hi])
     return {"condition_src": cond, "surrounding_code": surrounding}
+
+
+def _resolve_sink_addr(binary_path: str, path: Dict[str, Any], ex: PathExecutor) -> tuple[int | None, str | None]:
+    sink = path.get("sink", {})
+    sink_file = sink.get("file_path")
+    sink_line = sink.get("line_number")
+    if sink_file and sink_line:
+        addr = nearest_line_addr(binary_path, sink_file, sink_line)
+        if addr is not None:
+            return addr, None
+
+    legacy_addr = ex.func_addr("__sink_reached")
+    if legacy_addr is not None:
+        return legacy_addr, "legacy_sink_symbol"
+
+    return None, "sink_addr_unresolved"
 
 
 def scan_path_branches(binary_path: str, path: Dict[str, Any],
@@ -51,9 +67,9 @@ def scan_path_branches(binary_path: str, path: Dict[str, Any],
         return {"success": False, "error": f"unknown source_mode: {source_mode}",
                 "tainted_branches": []}
 
-    sink_addr = ex.func_addr("__sink_reached")
+    sink_addr, degraded_sink = _resolve_sink_addr(binary_path, path, ex)
     if sink_addr is None:
-        return {"success": False, "error": "__sink_reached not found in binary",
+        return {"success": False, "error": "sink address not found from SARIF/DWARF",
                 "tainted_branches": []}
 
     raw = ex.collect_tainted_branches(state, sink_addr, timeout=timeout)
@@ -77,4 +93,7 @@ def scan_path_branches(binary_path: str, path: Dict[str, Any],
             "guard_repr": b["guard_repr"],
         })
 
-    return {"success": True, "tainted_branches": enriched, "error": None}
+    result = {"success": True, "tainted_branches": enriched, "error": None}
+    if degraded_sink:
+        result["degraded"] = degraded_sink
+    return result

@@ -51,6 +51,28 @@ def line_to_addr(binary_path: str, source_file: str, line_number: int) -> Option
 from elftools.dwarf.locationlists import LocationEntry, LocationParser
 
 
+def nearest_line_addr(
+    binary_path: str,
+    source_file: str,
+    line_number: int,
+    max_forward_lines: int = 2,
+) -> Optional[int]:
+    """Resolve a source line to an executable address.
+
+    DWARF often maps a call expression to the next emitted line row rather than
+    the exact SARIF line.  Prefer the exact line, then a small forward search so
+    real sink lines can be used without a synthetic marker function.
+    """
+    exact = line_to_addr(binary_path, source_file, line_number)
+    if exact is not None:
+        return exact
+    for delta in range(1, max_forward_lines + 1):
+        addr = line_to_addr(binary_path, source_file, line_number + delta)
+        if addr is not None:
+            return addr
+    return None
+
+
 def func_entry(binary_path: str, func_name: str) -> Optional[int]:
     f, dwarf = _open_dwarf(binary_path)
     if dwarf is None:

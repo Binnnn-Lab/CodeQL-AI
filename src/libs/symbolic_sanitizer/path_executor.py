@@ -89,7 +89,7 @@ class _BranchCollector:
 
 
 # ---------------------------------------------------------------------------
-# SimProcedure: symbolic fread hook
+# SimProcedures: libc source hooks
 # ---------------------------------------------------------------------------
 
 def _make_fread_hook(sym_bytes: List[claripy.ast.bv.BV]) -> angr.SimProcedure:
@@ -113,6 +113,101 @@ def _make_fread_hook(sym_bytes: List[claripy.ast.bv.BV]) -> angr.SimProcedure:
             return claripy.BVV(n_bytes, self.state.arch.bits)
 
     return _SymbolicFread()
+
+
+_SCANF_SPEC_WIDTHS = {
+    "hh": 1,
+    "h": 2,
+    "": 4,
+    "l": 8,
+    "ll": 8,
+}
+
+
+def _make_scanf_hook(sym_bytes: List[claripy.ast.bv.BV], has_stream_arg: bool) -> angr.SimProcedure:
+    """Return a small scanf-family hook for common Juliet taint sources.
+
+    It models numeric and string conversions by writing symbolic bytes directly
+    to destination pointers.  The hook intentionally accepts the common subset
+    used by Juliet and returns a successful assignment count.
+    """
+
+    class _SymbolicScanf(angr.SimProcedure):
+        _sym_bytes = sym_bytes
+        _has_stream_arg = has_stream_arg
+
+        def _read_c_string(self, ptr, limit: int = 256) -> str:
+            chars = []
+            for off in range(limit):
+                try:
+                    b = self.state.solver.eval(self.state.memory.load(ptr + off, 1))
+                except Exception:
+                    break
+                if b == 0:
+                    break
+                chars.append(b)
+            return bytes(chars).decode("utf-8", "ignore")
+
+        def _parse_widths(self, fmt: str) -> List[int]:
+            widths: List[int] = []
+            i = 0
+            while i < len(fmt):
+                if fmt[i] != "%":
+                    i += 1
+                    continue
+                i += 1
+                if i < len(fmt) and fmt[i] == "%":
+                    i += 1
+                    continue
+                if i < len(fmt) and fmt[i] == "*":
+                    while i < len(fmt) and fmt[i] not in "diuoxXcs":
+                        i += 1
+                    i += 1
+                    continue
+                while i < len(fmt) and fmt[i].isdigit():
+                    i += 1
+                length = ""
+                if fmt.startswith("ll", i):
+                    length = "ll"
+                    i += 2
+                elif i < len(fmt) and fmt[i] in "hl":
+                    length = fmt[i]
+                    i += 1
+                if i >= len(fmt):
+                    break
+                conv = fmt[i]
+                i += 1
+                if conv in "diuoxX":
+                    widths.append(_SCANF_SPEC_WIDTHS.get(length, 4))
+                elif conv == "c":
+                    widths.append(1)
+                elif conv == "s":
+                    widths.append(min(32, len(self._sym_bytes)))
+            return widths
+
+        def _store_symbolic(self, ptr, byte_offset: int, width: int) -> None:
+            width = min(width, max(0, len(self._sym_bytes) - byte_offset))
+            for i in range(width):
+                self.state.memory.store(ptr + i, self._sym_bytes[byte_offset + i])
+
+        def run(self, *args):
+            fmt_index = 1 if self._has_stream_arg else 0
+            if len(args) <= fmt_index:
+                return claripy.BVV(0, self.state.arch.bits)
+            fmt = self._read_c_string(args[fmt_index])
+            widths = self._parse_widths(fmt)
+            assigned = 0
+            byte_offset = 0
+            dest_args = args[fmt_index + 1:]
+            for dest, width in zip(dest_args, widths):
+                self._store_symbolic(dest, byte_offset, width)
+                assigned += 1
+                byte_offset += width
+                if byte_offset >= len(self._sym_bytes):
+                    break
+            return claripy.BVV(assigned, self.state.arch.bits)
+
+    return _SymbolicScanf()
 
 
 # ---------------------------------------------------------------------------
@@ -145,17 +240,21 @@ class PathExecutor:
     def initial_state_libc_stdin(self) -> angr.SimState:
         """Return a full_init_state where stdin carries our symbolic bytes.
 
-        Hooks fread/fgets so that the symbolic bytes are written directly into
-        the destination buffer — this guarantees taint propagation even when
-        angr's built-in SimProcedure does not forward SimFileStream content.
+        Hooks fread/scanf-family APIs so that symbolic bytes are written
+        directly into destination buffers. This guarantees taint propagation
+        even when angr's libc SimProcedures do not forward SimFileStream
+        content in the way the source language code expects.
         """
         sym_bytes = self.make_symbolic_bytes()
 
-        # Hook fread with our symbolic injector
         self.project.hook_symbol(
             "fread",
             _make_fread_hook(sym_bytes),
         )
+        self.project.hook_symbol("scanf", _make_scanf_hook(sym_bytes, has_stream_arg=False))
+        self.project.hook_symbol("fscanf", _make_scanf_hook(sym_bytes, has_stream_arg=True))
+        self.project.hook_symbol("__isoc99_scanf", _make_scanf_hook(sym_bytes, has_stream_arg=False))
+        self.project.hook_symbol("__isoc99_fscanf", _make_scanf_hook(sym_bytes, has_stream_arg=True))
 
         stdin_content = claripy.Concat(*sym_bytes)
         state = self.project.factory.full_init_state(
@@ -222,6 +321,15 @@ class PathExecutor:
         "!=": lambda a, b: a != b,
     }
 
+    _SIGNED_CMP_OPS = {
+        ">=": lambda a, b: a.SGE(b),
+        "<=": lambda a, b: a.SLE(b),
+        ">":  lambda a, b: a.SGT(b),
+        "<":  lambda a, b: a.SLT(b),
+        "==": lambda a, b: a == b,
+        "!=": lambda a, b: a != b,
+    }
+
     def solve_with_decisions(
         self,
         initial_state: angr.SimState,
@@ -275,7 +383,8 @@ class PathExecutor:
                 off = attack_predicate["byte_offset"]
                 width = attack_predicate["width"]
                 op_name = attack_predicate["op"]
-                val = attack_predicate["value"]
+                val = int(attack_predicate["value"])
+                signed = bool(attack_predicate.get("signed", False))
                 if width < 1 or width > TAINT_BUF_SIZE:
                     raise ValueError(f"width {width} out of range")
                 if off + width > TAINT_BUF_SIZE:
@@ -289,8 +398,9 @@ class PathExecutor:
                     composed = claripy.Concat(*reversed(raw_bytes))
                 else:
                     composed = claripy.Concat(*raw_bytes)
-                cmp_fn = self._CMP_OPS[op_name]
-                constraint = cmp_fn(composed, val)
+                val_bv = claripy.BVV(val % (1 << composed.size()), composed.size())
+                cmp_fn = self._SIGNED_CMP_OPS[op_name] if signed else self._CMP_OPS[op_name]
+                constraint = cmp_fn(composed, val_bv)
                 initial_state.add_constraints(constraint)
             except Exception as exc:
                 result["error"] = f"attack_predicate error: {exc}"

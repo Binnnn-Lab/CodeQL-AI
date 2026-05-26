@@ -33,3 +33,27 @@ def test_scan_returns_enriched_branches(two_branches_binary):
         assert "file" in b
         assert "line" in b
         assert "condition_src" in b
+
+
+def test_scan_uses_real_sink_line_without_marker(two_branches_no_marker_binary):
+    path = {
+        "source": {
+            "file_path": os.path.join(FIX, "two_branches_no_marker.c"),
+            "line_number": 8,
+            "function_name": "vuln_entry",
+        },
+        "sink": {
+            "file_path": os.path.join(FIX, "two_branches_no_marker.c"),
+            "line_number": 15,
+            "function_name": "vuln_entry",
+        },
+        "intermediate_locations": [],
+    }
+    result = scan_path_branches(
+        binary_path=two_branches_no_marker_binary,
+        path=path,
+        source_mode="libc_stdin",
+    )
+    assert result["success"] is True
+    assert len(result["tainted_branches"]) >= 2
+    assert result.get("degraded") is None

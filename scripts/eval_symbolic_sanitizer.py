@@ -27,7 +27,7 @@ logging.disable(logging.CRITICAL)
 
 from libs.symbolic_sanitizer import (
     parse_sarif,
-    build_harness,
+    build_binary,
     scan_path_branches,
     verify_with_decisions,
     resolve_compile_config,
@@ -119,10 +119,10 @@ def _ensure_compile_script(dataset_path):
         return cs['compile_script']
     juliet_root = dataset_path
     template = DEFAULT_COMPILE_SH.replace(
-        '"$HARNESS" "$ORIG"',
+        '"$SRC"',
         f'-I"{juliet_root}/testcasesupport" '
         f'"{juliet_root}/testcasesupport/io.c" '
-        '"$HARNESS" "$ORIG"',
+        '"$SRC"',
     )
     r = write_compile_config(dataset_path, template)
     return r.get('compile_script')
@@ -178,16 +178,15 @@ def evaluate_alert(cwe, idx, path_dict, compile_script):
             record['verdict'] = 'vulnerable'
             return record
 
-        # Step 1: build harness
+        # Step 1: build original analysis binary
         source_api = 'fscanf'  # default for Juliet
-        bh = build_harness(
+        bh = build_binary(
             source_file=source_file,
-            vuln_entry=func_name,
             source_api=source_api,
             compile_script=compile_script,
         )
         if not bh.get('success'):
-            record['error_msg'] = f'build_harness_failed: {bh.get("error", "")[:200]}'
+            record['error_msg'] = f'build_binary_failed: {bh.get("error", "")[:200]}'
             record['crashed'] = True
             record['verdict'] = 'vulnerable'
             return record

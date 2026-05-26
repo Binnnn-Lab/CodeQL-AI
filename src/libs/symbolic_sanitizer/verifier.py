@@ -5,7 +5,23 @@ import os
 from typing import Dict, Any, Optional
 
 from .path_executor import PathExecutor
-from .dwarf_resolver import line_to_addr, func_entry
+from .dwarf_resolver import line_to_addr, func_entry, nearest_line_addr
+
+
+def _resolve_sink_addr(binary_path: str, path: Dict[str, Any], ex: PathExecutor) -> tuple[int | None, str | None]:
+    sink = path.get("sink", {})
+    sink_file = sink.get("file_path")
+    sink_line = sink.get("line_number")
+    if sink_file and sink_line:
+        addr = nearest_line_addr(binary_path, sink_file, sink_line)
+        if addr is not None:
+            return addr, None
+
+    legacy_addr = ex.func_addr("__sink_reached")
+    if legacy_addr is not None:
+        return legacy_addr, "legacy_sink_symbol"
+
+    return None, "sink_addr_unresolved"
 
 
 def verify_with_decisions(
@@ -45,13 +61,14 @@ def verify_with_decisions(
         return {"success": False, "error": f"unknown source_mode: {source_mode}",
                 "reachable": False, "counterexample": None, "sat_branches": []}
 
-    sink_addr = ex.func_addr("__sink_reached")
+    sink_addr, degraded_sink = _resolve_sink_addr(binary_path, path, ex)
     if sink_addr is None:
-        return {"success": False, "error": "__sink_reached not in binary",
+        return {"success": False, "error": "sink address not found from SARIF/DWARF",
                 "reachable": False, "counterexample": None, "sat_branches": []}
 
     res = ex.solve_with_decisions(state, sink_addr, branch_decisions,
                                   attack_predicate, timeout=timeout)
-    if degraded:
-        res["degraded"] = degraded
+    degradations = [d for d in (degraded, degraded_sink) if d]
+    if degradations:
+        res["degraded"] = ",".join(degradations)
     return res
