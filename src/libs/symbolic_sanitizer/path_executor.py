@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import angr
 import claripy
@@ -208,3 +208,188 @@ class PathExecutor:
         simgr.explore(find=sink_addr, step_func=_step_cb, num_find=4)
 
         return collector.branches
+
+    # ------------------------------------------------------------------
+    # Constraint solver
+    # ------------------------------------------------------------------
+
+    _CMP_OPS = {
+        ">=": lambda a, b: a >= b,
+        "<=": lambda a, b: a <= b,
+        ">":  lambda a, b: a > b,
+        "<":  lambda a, b: a < b,
+        "==": lambda a, b: a == b,
+        "!=": lambda a, b: a != b,
+    }
+
+    def solve_with_decisions(
+        self,
+        initial_state: angr.SimState,
+        sink_addr: int,
+        branch_decisions: Dict[str, bool],
+        attack_predicate: Optional[Dict[str, Any]] = None,
+        timeout: int = 120,
+    ) -> Dict[str, Any]:
+        """Explore toward *sink_addr* under constraints.
+
+        Parameters
+        ----------
+        initial_state : angr.SimState
+            Symbolic state (usually from :meth:`initial_state_libc_stdin`).
+        sink_addr : int
+            Address of the target / sink function.
+        branch_decisions : dict[str, bool]
+            Maps ``branch_id`` to ``True`` (include — force the guard's accept
+            side) or ``False`` (exclude).  Only keys with value ``True`` are
+            enforced; ``False`` entries are ignored.
+        attack_predicate : dict, optional
+            If provided, composes symbolic bytes at ``byte_offset`` with
+            ``width`` into a single BV and adds a comparison constraint:
+            ``composed OP value``.  Keys: ``byte_offset``, ``width``, ``op``
+            (one of ``>= <= > < == !=``), ``value`` (int).
+        timeout : int
+            Exploration timeout in seconds (default 120).
+
+        Returns
+        -------
+        dict
+            ``success`` (bool), ``reachable`` (bool), ``counterexample``
+            (32-byte hex string or ``""``), ``sat_branches`` (list of
+            branch_ids whose guards were satisfiable), ``paths_explored``
+            (int), ``error`` (str or ``""``).
+        """
+        result: Dict[str, Any] = {
+            "success": False,
+            "reachable": False,
+            "counterexample": "",
+            "sat_branches": [],
+            "paths_explored": 0,
+            "error": "",
+        }
+
+        include_ids: Set[str] = {bid for bid, val in branch_decisions.items() if val}
+
+        # --- Apply attack predicate as a pre-exploration constraint -------------
+        if attack_predicate is not None:
+            try:
+                off = attack_predicate["byte_offset"]
+                width = attack_predicate["width"]
+                op_name = attack_predicate["op"]
+                val = attack_predicate["value"]
+                if width < 1 or width > TAINT_BUF_SIZE:
+                    raise ValueError(f"width {width} out of range")
+                if off + width > TAINT_BUF_SIZE:
+                    raise ValueError(f"byte_offset+width exceeds buffer")
+                raw_bytes = self._sym_bytes[off : off + width]
+                # Compose in the target's native endianness so the BV matches
+                # how the program interprets the bytes in memory.  Concat places
+                # the first argument at the MSB; for little-endian, byte at
+                # offset 0 is the LSB so we reverse.
+                if self.project.arch.memory_endness == "Iend_LE":
+                    composed = claripy.Concat(*reversed(raw_bytes))
+                else:
+                    composed = claripy.Concat(*raw_bytes)
+                cmp_fn = self._CMP_OPS[op_name]
+                constraint = cmp_fn(composed, val)
+                initial_state.add_constraints(constraint)
+            except Exception as exc:
+                result["error"] = f"attack_predicate error: {exc}"
+                result["success"] = True
+                return result
+
+        # --- Step function: record branches + force include guards ---------------
+        sat_branches: List[str] = []
+        paths_explored = 0
+
+        def _step(simgr):
+            nonlocal paths_explored
+            paths_explored += len(simgr.active)
+
+            to_remove = []
+            for s in list(simgr.active):
+                guard = None
+                try:
+                    guards = s.history.jump_guards
+                    guard = guards[-1]
+                except Exception:
+                    pass
+                if guard is None:
+                    try:
+                        guard = s.history.parent.jump_guard
+                    except Exception:
+                        continue
+                if guard is None:
+                    continue
+
+                # Only care about symbolic guards tied to tainted bytes
+                try:
+                    if not guard.symbolic:
+                        continue
+                except AttributeError:
+                    continue
+
+                taint_vars = _ast_taint_vars(guard)
+                if not taint_vars:
+                    continue
+
+                guard_addr = 0
+                try:
+                    bbl_addrs = s.history.bbl_addrs
+                    if len(bbl_addrs):
+                        guard_addr = bbl_addrs[-1]
+                except Exception:
+                    pass
+
+                bid = _branch_id(guard_addr, guard)
+
+                # If this branch is in the include set, add the guard as a
+                # constraint so the state is forced down the accept path.
+                if bid in include_ids:
+                    if s.solver.satisfiable(extra_constraints=(guard,)):
+                        s.add_constraints(guard)
+                        if bid not in sat_branches:
+                            sat_branches.append(bid)
+                    else:
+                        # Guard unsatisfiable with current constraints;
+                        # drop this state.
+                        to_remove.append(s)
+
+            for s in to_remove:
+                if s in simgr.active:
+                    simgr.active.remove(s)
+
+            return simgr
+
+        # --- Explore ------------------------------------------------------------
+        try:
+            simgr = self.project.factory.simgr(initial_state, save_unsat=False)
+            simgr.use_technique(angr.exploration_techniques.LengthLimiter(max_length=2000))
+            simgr.explore(find=sink_addr, step_func=_step, num_find=1)
+        except Exception as exc:
+            result["error"] = str(exc)
+            result["success"] = True
+            result["paths_explored"] = paths_explored
+            return result
+
+        # --- Extract results ----------------------------------------------------
+        result["paths_explored"] = paths_explored
+        result["sat_branches"] = sat_branches
+
+        if simgr.found:
+            found_state = simgr.found[0]
+            result["reachable"] = True
+            # Evaluate 32 symbolic bytes to produce a concrete counterexample
+            try:
+                concrete = []
+                for i in range(32):
+                    if i < len(self._sym_bytes):
+                        val = found_state.solver.eval(self._sym_bytes[i])
+                    else:
+                        val = 0
+                    concrete.append(val)
+                result["counterexample"] = bytes(concrete).hex()
+            except Exception:
+                result["counterexample"] = ""
+
+        result["success"] = True
+        return result
