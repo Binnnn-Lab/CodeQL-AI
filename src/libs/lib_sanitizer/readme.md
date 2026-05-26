@@ -38,8 +38,37 @@
     *   **输入**: `patched_ql_path`  和 `new_content` (包含新 Sanitizer 定义的完整或片段 QL 代码)。
     *   **目的**: 将新的 Sanitizer 逻辑写入查询脚本，消除误报。
 
+## Step 5: 保存可复用经验
+如果 Step 4 中确认某个项目内部函数或模式具有 Sanitizer 效果，请使用工具 `save_experience_pattern` 将其保存为结构化经验，供后续 database 分析复用。
+*   **输入**: 一个 JSON 对象，至少包含：
+    ```json
+    {
+      "scope": "repo",
+      "repo_id": "...",
+      "language": "cpp",
+      "cwe": "CWE-...",
+      "query_id": "...",
+      "type": "call_sanitizer",
+      "function_name": "...",
+      "effect": "...",
+      "confidence": "low",
+      "evidence": {
+        "database": "...",
+        "file": "...",
+        "reason": "..."
+      }
+    }
+    ```
+*   **注意**: 新经验默认应使用 `confidence: "low"`，不要因为一次 LLM 判断就直接高置信度 suppress 后续告警。
+
+## Step 6: 复用历史经验
+在分析新的 database 或同一 repo 的后续版本前，可以先使用 `load_applicable_experiences` 根据 `repo_id`、`language`、`cwe`、`query_id` 等条件读取历史经验。
+*   如果历史经验适用，可以用它辅助生成当前 database 的 QL patch。
+*   如果人工或回归测试确认经验有效，可以使用 `update_experience_validation` 更新状态、置信度和验证次数。
+
 # Constraints
 *   在调用工具前，请简要说明你的分析思路。
 *   如果 `read_function_implementation` 返回空（找不到文件），请尝试根据函数名推断其用途。
 *   生成的 QL 代码必须语法正确且符合 CodeQL 标准库规范。
+*   低置信度经验只能作为辅助判断或待复核标记，不应直接导致真实告警被静默删除。
 ```
