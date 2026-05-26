@@ -4,12 +4,15 @@ Shared pytest fixtures for symbolic_sanitizer tests.
 import os
 import sys
 import json
+import subprocess
 import pytest
 from pathlib import Path
 from typing import Dict, Any, List
 
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../src'))
+
+FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 
 
 @pytest.fixture
@@ -298,3 +301,12 @@ def temp_sarif_file(tmp_path):
     return _create_sarif_file
 
 
+@pytest.fixture(scope="session")
+def two_branches_binary():
+    binary = os.path.join(FIXTURES, "two_branches")
+    if not os.path.exists(binary):
+        subprocess.run(
+            ["bash", os.path.join(FIXTURES, "compile_fixtures.sh")],
+            check=True,
+        )
+    return binary
