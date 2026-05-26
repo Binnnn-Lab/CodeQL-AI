@@ -6,6 +6,7 @@ from .sarif_parser import (
     load_sarif_from_file,
     extract_taint_paths,
     TaintPath,
+    parse_sarif,
 )
 from .path_context import read_path_context, find_enclosing_function
 from .harness_generator import generate_harness, compile_harness
@@ -16,6 +17,7 @@ __all__ = [
     'load_sarif_from_file',
     'extract_taint_paths',
     'TaintPath',
+    'parse_sarif',
     'read_path_context',
     'find_enclosing_function',
     'generate_harness',
