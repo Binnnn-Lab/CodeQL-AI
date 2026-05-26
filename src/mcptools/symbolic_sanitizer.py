@@ -1,169 +1,78 @@
 #!/usr/bin/env python3
-"""
-MCP Server: Symbolic Sanitizer
-Branch-level selective symbolic execution for SAST false positive reduction.
-
-Tools: parse_sarif_detailed, read_path_context, generate_harness,
-       resolve_compile_config, write_compile_config, compile_harness, verify_branch
-"""
-
-import sys
+"""MCP Server: Symbolic Sanitizer (4-tool path-guided selective sym-exec)."""
 import os
-import json
+import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from fastmcp import FastMCP
 from libs.symbolic_sanitizer import (
-    load_sarif_from_file,
-    extract_taint_paths,
-    read_path_context as _read_path_context,
-    generate_harness as _generate_harness,
-    compile_harness as _compile_harness,
+    parse_sarif as _parse_sarif,
+    build_harness as _build_harness,
+    scan_path_branches as _scan_path_branches,
+    verify_with_decisions as _verify_with_decisions,
     resolve_compile_config as _resolve_compile_config,
     write_compile_config as _write_compile_config,
-    SymbolicExecutor,
+    DEFAULT_COMPILE_SH,
 )
 
 mcp = FastMCP(
     name="symbolic_sanitizer",
-    instructions="Branch-level selective symbolic execution for verifying sanitizer effectiveness"
+    instructions=(
+        "Path-guided selective symbolic execution. Workflow: "
+        "parse_sarif -> build_harness -> scan_path_branches -> "
+        "(agent decides branch include/exclude + attack predicate) -> "
+        "verify_with_decisions."
+    ),
 )
 
 
 @mcp.tool()
-def parse_sarif_detailed(sarif_path: str) -> dict:
-    """Parse SARIF file and extract complete taint paths with source/sink information."""
-    if not os.path.exists(sarif_path):
-        return {"success": False, "error": f"SARIF file not found: {sarif_path}"}
-
-    try:
-        sarif_data = load_sarif_from_file(sarif_path)
-    except json.JSONDecodeError as e:
-        return {"success": False, "error": f"Failed to parse SARIF JSON: {str(e)}"}
-    except Exception as e:
-        return {"success": False, "error": f"Failed to load SARIF file: {str(e)}"}
-
-    try:
-        taint_paths = extract_taint_paths(sarif_data)
-    except Exception as e:
-        return {"success": False, "error": f"Failed to extract taint paths: {str(e)}"}
-
-    if not taint_paths:
-        return {"success": True, "count": 0, "paths": []}
-
-    formatted_paths = []
-    for path in taint_paths:
-        formatted_paths.append({
-            "path_id": path.path_id,
-            "source": {
-                "file_path": path.source.get("file_path", ""),
-                "line_number": path.source.get("line_number", 0),
-                "function_name": path.source.get("function_name"),
-                "column": path.source.get("column")
-            },
-            "sink": {
-                "file_path": path.sink.get("file_path", ""),
-                "line_number": path.sink.get("line_number", 0),
-                "function_name": path.sink.get("function_name"),
-                "column": path.sink.get("column")
-            },
-            "intermediate_locations": [
-                {
-                    "file_path": loc.get("file_path", ""),
-                    "line_number": loc.get("line_number", 0),
-                    "function_name": loc.get("function_name"),
-                    "column": loc.get("column")
-                }
-                for loc in path.intermediate_locations
-            ],
-            "rule_id": path.rule_id,
-            "message": path.message
-        })
-
-    return {"success": True, "count": len(formatted_paths), "paths": formatted_paths}
+def parse_sarif(sarif_path: str, dataset_root: str) -> dict:
+    """Parse SARIF and return taint paths with absolute paths + function source."""
+    return _parse_sarif(sarif_path, dataset_root)
 
 
 @mcp.tool()
-def read_path_context(locations: list) -> dict:
-    """Batch-read source code for all nodes on a taint path."""
-    return _read_path_context(locations)
+def build_harness(source_file: str, vuln_entry: str, source_api: str,
+                  compile_script: str, entry_signature: str = "void") -> dict:
+    """Compile a template harness linked with the original source file."""
+    return _build_harness(source_file, vuln_entry, source_api,
+                          compile_script, entry_signature=entry_signature)
 
 
 @mcp.tool()
-def generate_harness(
-    target_function: str,
-    source_file: str,
-    call_chain: list,
-    sink_expression: str,
-    includes: list = [],
-) -> dict:
-    """Generate C harness code from structured parameters."""
-    return _generate_harness(
-        target_function=target_function,
-        source_file=source_file,
-        call_chain=call_chain,
-        sink_expression=sink_expression,
-        includes=includes,
-    )
+def scan_path_branches(binary_path: str, path: dict, source_mode: str,
+                       timeout: int = 120) -> dict:
+    """Enumerate tainted branches along the SARIF path. Agent decides which to
+    treat as sanitizers."""
+    return _scan_path_branches(binary_path, path, source_mode, timeout=timeout)
+
+
+@mcp.tool()
+def verify_with_decisions(binary_path: str, path: dict, source_mode: str,
+                          branch_decisions: dict,
+                          attack_predicate: dict | None = None,
+                          timeout: int = 120) -> dict:
+    """Re-execute path applying chosen sanitizer guards + attack predicate."""
+    return _verify_with_decisions(binary_path, path, source_mode,
+                                  branch_decisions, attack_predicate,
+                                  timeout=timeout)
 
 
 @mcp.tool()
 def resolve_compile_config(dataset_path: str) -> dict:
-    """Check if dataset has compile.sh config at {dataset}/.CodeQL-AI/compile.sh."""
+    """Locate an existing compile.sh under dataset_path."""
     return _resolve_compile_config(dataset_path)
 
 
 @mcp.tool()
-def write_compile_config(dataset_path: str, script_content: str) -> dict:
-    """Write compile.sh to {dataset}/.CodeQL-AI/compile.sh."""
-    return _write_compile_config(dataset_path, script_content)
-
-
-@mcp.tool()
-def compile_harness(harness_code: str, compile_script: str, target_file: str) -> dict:
-    """Compile harness code using dataset's compile.sh.
-
-    `target_file` is the source file holding the target function (from SARIF);
-    its extension decides whether the harness is compiled as C or C++.
-    """
-    return _compile_harness(harness_code, compile_script, target_file)
-
-
-@mcp.tool()
-def verify_branch(
-    binary_path: str,
-    constraints: dict,
-    sink_marker: str = "__sink_reached",
-    timeout: int = 120,
-) -> dict:
-    """Verify if attack input can reach sink marker via angr symbolic execution."""
-    if not os.path.exists(binary_path):
-        return {
-            "success": False,
-            "reachable": False,
-            "paths_explored": 0,
-            "paths_to_sink": 0,
-            "counterexample": None,
-            "error": f"Binary file not found: {binary_path}",
-        }
-
-    try:
-        executor = SymbolicExecutor(binary_path)
-        return executor.execute_reachability(constraints, sink_marker, timeout)
-    except Exception as e:
-        return {
-            "success": False,
-            "reachable": False,
-            "paths_explored": 0,
-            "paths_to_sink": 0,
-            "counterexample": None,
-            "error": f"Symbolic execution failed: {str(e)}",
-        }
+def write_compile_config(dataset_path: str, script_content: str | None = None) -> dict:
+    """Write a compile.sh into dataset_path. Defaults to the template that
+    enforces -g -O0 -fno-inline."""
+    return _write_compile_config(dataset_path,
+                                 script_content or DEFAULT_COMPILE_SH)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--stdio":
-        mcp.run()
-    else:
-        mcp.run(transport="http", host="127.0.0.1", port=8000)
+    mcp.run()
