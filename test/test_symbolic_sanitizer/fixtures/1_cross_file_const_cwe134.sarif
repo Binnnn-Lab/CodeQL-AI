@@ -1,0 +1,480 @@
+{
+  "version": "2.1.0",
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "CodeQL"
+        }
+      },
+      "results": [
+        {
+          "ruleId": "cpp/non-constant-format",
+          "ruleIndex": 0,
+          "rule": {
+            "id": "cpp/non-constant-format",
+            "index": 0
+          },
+          "message": {
+            "text": "The format string argument to [fprintf](1) has a source which cannot be verified to originate from a string literal."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_connect_socket_fprintf_82_goodG2B.cpp",
+                  "uriBaseId": "%SRCROOT%",
+                  "index": 0
+                },
+                "region": {
+                  "startLine": 28,
+                  "startColumn": 21,
+                  "endColumn": 25
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "f4207e0712cdfbba:1",
+            "primaryLocationStartColumnFingerprint": "16"
+          },
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_connect_socket_fprintf_82_goodG2B.cpp",
+                            "uriBaseId": "%SRCROOT%",
+                            "index": 0
+                          },
+                          "region": {
+                            "startLine": 25,
+                            "startColumn": 95,
+                            "endColumn": 99
+                          }
+                        },
+                        "message": {
+                          "text": "*data"
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_connect_socket_fprintf_82_goodG2B.cpp",
+                            "uriBaseId": "%SRCROOT%",
+                            "index": 0
+                          },
+                          "region": {
+                            "startLine": 28,
+                            "startColumn": 21,
+                            "endColumn": 25
+                          }
+                        },
+                        "message": {
+                          "text": "*data"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "relatedLocations": [
+            {
+              "id": 1,
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_connect_socket_fprintf_82_goodG2B.cpp",
+                  "uriBaseId": "%SRCROOT%",
+                  "index": 0
+                },
+                "region": {
+                  "startLine": 28,
+                  "startColumn": 5,
+                  "endColumn": 12
+                }
+              },
+              "message": {
+                "text": "fprintf"
+              }
+            },
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_connect_socket_fprintf_82_goodG2B.cpp",
+                  "uriBaseId": "%SRCROOT%",
+                  "index": 0
+                },
+                "region": {
+                  "startLine": 25,
+                  "startColumn": 95,
+                  "endColumn": 99
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "artifacts": [
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_connect_socket_fprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 0
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_connect_socket_fprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 1
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_connect_socket_printf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 2
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_connect_socket_printf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 3
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_connect_socket_snprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 4
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_connect_socket_snprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 5
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_connect_socket_vfprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 6
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_connect_socket_vfprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 7
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_connect_socket_vprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 8
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_connect_socket_vprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 9
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_console_fprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 10
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_console_printf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 11
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_console_fprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 12
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_console_printf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 13
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_console_snprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 14
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_console_vfprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 15
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_console_vfprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 16
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_console_vprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 17
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_console_snprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 18
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_environment_fprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 19
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_environment_printf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 20
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s01/CWE134_Uncontrolled_Format_String__char_console_vprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 21
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_environment_snprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 22
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_environment_printf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 23
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_environment_fprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 24
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_environment_snprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 25
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_environment_vfprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 26
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_environment_vfprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 27
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_environment_vprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 28
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_environment_vprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 29
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_file_fprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 30
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_file_fprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 31
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_file_printf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 32
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_file_printf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 33
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_file_snprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 34
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_file_snprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 35
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_file_vfprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 36
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s02/CWE134_Uncontrolled_Format_String__char_file_vfprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 37
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s03/CWE134_Uncontrolled_Format_String__char_file_vprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 38
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s03/CWE134_Uncontrolled_Format_String__char_file_vprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 39
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s03/CWE134_Uncontrolled_Format_String__char_listen_socket_fprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 40
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s03/CWE134_Uncontrolled_Format_String__char_listen_socket_printf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 41
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s03/CWE134_Uncontrolled_Format_String__char_listen_socket_fprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 42
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s03/CWE134_Uncontrolled_Format_String__char_listen_socket_printf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 43
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s03/CWE134_Uncontrolled_Format_String__char_listen_socket_snprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 44
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s03/CWE134_Uncontrolled_Format_String__char_listen_socket_snprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 45
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s03/CWE134_Uncontrolled_Format_String__char_listen_socket_vfprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 46
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s03/CWE134_Uncontrolled_Format_String__char_listen_socket_vfprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 47
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s03/CWE134_Uncontrolled_Format_String__char_listen_socket_vprintf_81_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 48
+          }
+        },
+        {
+          "location": {
+            "uri": "testcases/CWE134_Uncontrolled_Format_String/s03/CWE134_Uncontrolled_Format_String__char_listen_socket_vprintf_82_goodG2B.cpp",
+            "uriBaseId": "%SRCROOT%",
+            "index": 49
+          }
+        }
+      ]
+    }
+  ]
+}

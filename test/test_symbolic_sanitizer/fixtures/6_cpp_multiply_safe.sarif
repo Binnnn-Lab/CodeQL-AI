@@ -1,0 +1,65 @@
+{
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "CodeQL"
+        }
+      },
+      "results": [
+        {
+          "ruleId": "cpp/integer-overflow-tainted",
+          "ruleIndex": 9,
+          "rule": {
+            "id": "cpp/integer-overflow-tainted",
+            "index": 9
+          },
+          "message": {
+            "text": "[value read by fscanf](1) flows an expression which might overflow."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "testcases/CWE190_Integer_Overflow/s05/CWE190_Integer_Overflow__unsigned_int_fscanf_multiply_83_goodB2G.cpp",
+                  "uriBaseId": "%SRCROOT%",
+                  "index": 15
+                },
+                "region": {
+                  "startLine": 38,
+                  "startColumn": 35,
+                  "endColumn": 43
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "10dd7b16c65bec95:1",
+            "primaryLocationStartColumnFingerprint": "22"
+          },
+          "relatedLocations": [
+            {
+              "id": 1,
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "testcases/CWE190_Integer_Overflow/s05/CWE190_Integer_Overflow__unsigned_int_fscanf_multiply_83_goodB2G.cpp",
+                  "uriBaseId": "%SRCROOT%",
+                  "index": 15
+                },
+                "region": {
+                  "startLine": 28,
+                  "startColumn": 26,
+                  "endColumn": 31
+                }
+              },
+              "message": {
+                "text": "value read by fscanf"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
