@@ -15,6 +15,7 @@ from .harness_builder import (
 )
 from .compile_config import resolve_compile_config, write_compile_config
 from .symbolic_sanitizer import SymbolicExecutor
+from .branch_scanner import scan_path_branches
 
 __all__ = [
     'load_sarif_from_file',
@@ -32,4 +33,5 @@ __all__ = [
     'resolve_compile_config',
     'write_compile_config',
     'SymbolicExecutor',
+    'scan_path_branches',
 ]
