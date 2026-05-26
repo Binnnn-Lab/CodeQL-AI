@@ -10,6 +10,9 @@ from .sarif_parser import (
 )
 from .path_context import read_path_context, find_enclosing_function
 from .harness_generator import generate_harness, compile_harness
+from .harness_builder import (
+    build_harness, render_harness, select_source_mode, DEFAULT_COMPILE_SH,
+)
 from .compile_config import resolve_compile_config, write_compile_config
 from .symbolic_sanitizer import SymbolicExecutor
 
@@ -22,6 +25,10 @@ __all__ = [
     'find_enclosing_function',
     'generate_harness',
     'compile_harness',
+    'build_harness',
+    'render_harness',
+    'select_source_mode',
+    'DEFAULT_COMPILE_SH',
     'resolve_compile_config',
     'write_compile_config',
     'SymbolicExecutor',
