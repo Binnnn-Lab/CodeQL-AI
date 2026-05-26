@@ -37,6 +37,7 @@ def verify_with_decisions(
                 "reachable": False, "counterexample": None, "sat_branches": []}
 
     ex = PathExecutor(binary_path)
+    angr_base = ex.project.loader.main_object.min_addr
 
     if source_mode == "libc_stdin":
         state = ex.initial_state_libc_stdin()
@@ -52,10 +53,10 @@ def verify_with_decisions(
                 return {"success": False, "error": "no DWARF for source line",
                         "reachable": False, "counterexample": None,
                         "sat_branches": [], "degraded": "no_dwarf_for_source"}
-            state = ex.initial_state_entry_fallback(faddr)
+            state = ex.initial_state_entry_fallback(faddr + angr_base)
             degraded = "no_dwarf_for_source"
         else:
-            state = ex.initial_state_mid_function(addr)
+            state = ex.initial_state_mid_function(addr + angr_base)
             degraded = None
     else:
         return {"success": False, "error": f"unknown source_mode: {source_mode}",
@@ -65,6 +66,10 @@ def verify_with_decisions(
     if sink_addr is None:
         return {"success": False, "error": "sink address not found from SARIF/DWARF",
                 "reachable": False, "counterexample": None, "sat_branches": []}
+
+    # DWARF returns section offsets; angr uses rebased addresses.
+    if sink_addr < angr_base:
+        sink_addr += angr_base
 
     res = ex.solve_with_decisions(state, sink_addr, branch_decisions,
                                   attack_predicate, timeout=timeout)

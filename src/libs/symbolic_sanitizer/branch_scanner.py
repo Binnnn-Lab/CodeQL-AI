@@ -45,6 +45,7 @@ def scan_path_branches(binary_path: str, path: Dict[str, Any],
                 "tainted_branches": []}
 
     ex = PathExecutor(binary_path)
+    angr_base = ex.project.loader.main_object.min_addr
 
     if source_mode == "libc_stdin":
         state = ex.initial_state_libc_stdin()
@@ -60,9 +61,9 @@ def scan_path_branches(binary_path: str, path: Dict[str, Any],
                 return {"success": False,
                         "error": "DWARF cannot resolve source address",
                         "tainted_branches": [], "degraded": "no_dwarf_for_source"}
-            state = ex.initial_state_entry_fallback(faddr)
+            state = ex.initial_state_entry_fallback(faddr + angr_base)
         else:
-            state = ex.initial_state_mid_function(addr)
+            state = ex.initial_state_mid_function(addr + angr_base)
     else:
         return {"success": False, "error": f"unknown source_mode: {source_mode}",
                 "tainted_branches": []}
@@ -72,16 +73,31 @@ def scan_path_branches(binary_path: str, path: Dict[str, Any],
         return {"success": False, "error": "sink address not found from SARIF/DWARF",
                 "tainted_branches": []}
 
+    # DWARF returns section offsets; angr uses rebased addresses.
+    if sink_addr < angr_base:
+        sink_addr += angr_base
+
     raw = ex.collect_tainted_branches(state, sink_addr, timeout=timeout)
+
+    # Build a basename -> absolute-path lookup from the SARIF path nodes.
+    known_files = {}
+    for node in [path.get("source"), path.get("sink"),
+                 *path.get("intermediate_locations", [])]:
+        fp = (node or {}).get("file_path", "")
+        if fp:
+            known_files.setdefault(os.path.basename(fp), fp)
 
     enriched = []
     for b in raw:
-        fl = addr_to_line(binary_path, b["guard_addr"])
+        dwarf_addr = b["guard_addr"] - angr_base
+        fl = addr_to_line(binary_path, dwarf_addr)
         if fl is None:
             file, line = "", 0
             src = {"condition_src": "", "surrounding_code": ""}
         else:
             file, line = fl
+            if not os.path.isabs(file):
+                file = known_files.get(os.path.basename(file), file)
             src = _read_source_line(file, line)
         enriched.append({
             "branch_id": b["branch_id"],
