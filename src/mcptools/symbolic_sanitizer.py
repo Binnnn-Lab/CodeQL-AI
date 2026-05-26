@@ -9,7 +9,6 @@ from fastmcp import FastMCP
 from libs.symbolic_sanitizer import (
     parse_sarif as _parse_sarif,
     build_binary as _build_binary,
-    build_harness as _build_harness,
     scan_path_branches as _scan_path_branches,
     verify_with_decisions as _verify_with_decisions,
     resolve_compile_config as _resolve_compile_config,
@@ -35,17 +34,15 @@ def parse_sarif(sarif_path: str, dataset_root: str) -> dict:
 
 
 @mcp.tool()
-def build_binary(source_file: str, source_api: str, compile_script: str) -> dict:
-    """Compile the original source file into a debuggable analysis binary."""
-    return _build_binary(source_file, source_api, compile_script)
+def build_binary(source_file: str, source_api: str, compile_script: str,
+                 dataset_path: str | None = None) -> dict:
+    """Compile the original source file into a debuggable analysis binary.
 
-
-@mcp.tool()
-def build_harness(source_file: str, vuln_entry: str, source_api: str,
-                  compile_script: str, entry_signature: str = "void") -> dict:
-    """Compatibility wrapper: compile a template harness linked with source."""
-    return _build_harness(source_file, vuln_entry, source_api,
-                          compile_script, entry_signature=entry_signature)
+    `dataset_path` is forwarded as the 4th positional arg to compile.sh so
+    dataset-specific scripts (Juliet, SARD, custom) can resolve testcasesupport
+    and shared headers without hardcoding the dataset root."""
+    return _build_binary(source_file, source_api, compile_script,
+                         dataset_path=dataset_path)
 
 
 @mcp.tool()

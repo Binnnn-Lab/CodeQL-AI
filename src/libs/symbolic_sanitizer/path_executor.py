@@ -25,7 +25,21 @@ def _ast_taint_vars(ast) -> List[str]:
 
 
 def _branch_id(guard_addr: int, ast) -> str:
-    h = hashlib.sha1(f"{guard_addr:x}:{ast!r}".encode()).hexdigest()[:8]
+    """Stable per-binary identifier for a conditional jump.
+
+    Keyed on the guard's basic-block address ONLY, so the two fork sides of
+    the same conditional (e.g. ``data <s K`` and ``data >=s K``) collapse to
+    a single ID. The agent reasons about *the conditional*, not about which
+    side a particular state took — the verifier handles side-specific
+    constraint pruning per-state.
+
+    Hashing the claripy AST is forbidden because claripy assigns
+    monotonically increasing internal serial numbers to BVS, so the same
+    guard produces different hashes across processes — breaking the contract
+    that branch_ids from scan feed back into verify.
+    """
+    del ast  # intentionally unused; see docstring
+    h = hashlib.sha1(f"{guard_addr:x}".encode()).hexdigest()[:8]
     return f"b_{h}"
 
 
@@ -35,7 +49,12 @@ class _BranchCollector:
 
     def __init__(self):
         self.branches: List[Dict[str, Any]] = []
-        self._seen_ids: set = set()
+        # Dedup on (branch_id, guard_repr): one entry per fork side. The
+        # scanner's merge step collapses sides under one branch_id and
+        # exposes both via `alternatives[]`, so we DO want both sides to
+        # pass through the collector — branch_id alone would drop the
+        # second side.
+        self._seen: set = set()
 
     def maybe_record(self, state) -> None:
         # Try the indexable history list first (angr >= 9.2)
@@ -77,13 +96,15 @@ class _BranchCollector:
             pass
 
         bid = _branch_id(guard_addr, guard)
-        if bid in self._seen_ids:
+        guard_repr = str(guard)[:512]
+        key = (bid, guard_repr)
+        if key in self._seen:
             return
-        self._seen_ids.add(bid)
+        self._seen.add(key)
         self.branches.append({
             "branch_id": bid,
             "guard_addr": guard_addr,
-            "guard_repr": str(guard)[:512],
+            "guard_repr": guard_repr,
             "taint_vars": taint_vars,
         })
 
@@ -131,6 +152,8 @@ def _make_scanf_hook(sym_bytes: List[claripy.ast.bv.BV], has_stream_arg: bool) -
     to destination pointers.  The hook intentionally accepts the common subset
     used by Juliet and returns a successful assignment count.
     """
+
+    _NUM_ARGS = (2 if has_stream_arg else 1) + 6
 
     class _SymbolicScanf(angr.SimProcedure):
         _sym_bytes = sym_bytes
@@ -190,24 +213,37 @@ def _make_scanf_hook(sym_bytes: List[claripy.ast.bv.BV], has_stream_arg: bool) -
             for i in range(width):
                 self.state.memory.store(ptr + i, self._sym_bytes[byte_offset + i])
 
-        def run(self, *args):
-            fmt_index = 1 if self._has_stream_arg else 0
-            if len(args) <= fmt_index:
-                return claripy.BVV(0, self.state.arch.bits)
-            fmt = self._read_c_string(args[fmt_index])
+        # Declare an explicit fixed-arity signature so angr's SimProcedure
+        # arg-resolution (which is driven by `inspect.signature(run)`) actually
+        # pulls calling-convention args. The previous `*args` form yielded
+        # num_args=0 and the hook silently injected zero symbolic bytes.
+        # We support up to 6 variadic destination pointers — covers all Juliet
+        # scanf-style call sites.
+        if has_stream_arg:
+            def run(self, stream, fmt_ptr, d0=None, d1=None, d2=None,
+                    d3=None, d4=None, d5=None):  # noqa: ARG002
+                return self._impl(fmt_ptr, [d0, d1, d2, d3, d4, d5])
+        else:
+            def run(self, fmt_ptr, d0=None, d1=None, d2=None,
+                    d3=None, d4=None, d5=None):
+                return self._impl(fmt_ptr, [d0, d1, d2, d3, d4, d5])
+
+        def _impl(self, fmt_ptr, dests):
+            fmt = self._read_c_string(fmt_ptr)
             widths = self._parse_widths(fmt)
             assigned = 0
             byte_offset = 0
-            dest_args = args[fmt_index + 1:]
-            for dest, width in zip(dest_args, widths):
-                self._store_symbolic(dest, byte_offset, width)
+            for j, width in enumerate(widths):
+                if j >= len(dests) or dests[j] is None:
+                    break
+                self._store_symbolic(dests[j], byte_offset, width)
                 assigned += 1
                 byte_offset += width
                 if byte_offset >= len(self._sym_bytes):
                     break
             return claripy.BVV(assigned, self.state.arch.bits)
 
-    return _SymbolicScanf()
+    return _SymbolicScanf(num_args=_NUM_ARGS)
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +298,24 @@ class PathExecutor:
         )
         return state
 
+    def initial_state_libc_stdin_at(self, func_addr: int) -> angr.SimState:
+        """libc_stdin variant that starts at a specific function entry via
+        call_state, skipping `_start → main → ...` overhead. fscanf-family
+        hooks still inject symbolic bytes into the destination pointer."""
+        sym_bytes = self.make_symbolic_bytes()
+
+        self.project.hook_symbol("fread", _make_fread_hook(sym_bytes))
+        for name in ("scanf", "fscanf", "__isoc99_scanf", "__isoc99_fscanf"):
+            try:
+                self.project.hook_symbol(
+                    name,
+                    _make_scanf_hook(sym_bytes, has_stream_arg=name.endswith("fscanf")),
+                )
+            except Exception:
+                pass
+
+        return self.project.factory.call_state(func_addr)
+
     def initial_state_mid_function(self, source_addr: int) -> angr.SimState:
         sym_bytes = self.make_symbolic_bytes()
         state = self.project.factory.call_state(source_addr)
@@ -300,13 +354,61 @@ class PathExecutor:
         def _step_cb(simgr):
             for s in simgr.active:
                 collector.maybe_record(s)
+            for s in simgr.stashes.get("found", []):
+                collector.maybe_record(s)
             return simgr
 
         simgr = self.project.factory.simgr(initial_state, save_unsat=False)
         simgr.use_technique(angr.exploration_techniques.LengthLimiter(max_length=2000))
         simgr.explore(find=sink_addr, step_func=_step_cb, num_find=4)
 
+        # When sink_addr coincides with a sanitizer if-line, the conditional
+        # jump at the END of the sink basic block has not yet been executed
+        # when explore() returns. Step the found states one more time so the
+        # collector observes the in-block guard.
+        if simgr.found:
+            extra = self.project.factory.simgr(simgr.found, save_unsat=False)
+            for _ in range(2):
+                if not extra.active:
+                    break
+                extra.step(step_func=_step_cb)
+
         return collector.branches
+
+    # ------------------------------------------------------------------
+    # Sink-accept corridor
+    # ------------------------------------------------------------------
+
+    def _sink_body_entry(self, sink_addr: int, max_walk: int = 8) -> int:
+        """Walk fall-through from sink_addr through any chained conditional
+        sanitizer compares; return the address of the first non-conditional
+        basic block reached. That block is the "accept-side body" — the place
+        execution lands after passing all sanitizer guards.
+
+        For a SARIF sink that points at an unsafe op directly (e.g. mid-body),
+        the very first block is already non-conditional and this returns
+        ``sink_addr`` unchanged.
+
+        For a SARIF sink that points at the sanitizer's if-line (CWE-190 style),
+        the walk crosses one or more cmp/jcc blocks and lands inside the
+        protected body.
+        """
+        cur = sink_addr
+        for _ in range(max_walk):
+            try:
+                blk = self.project.factory.block(cur)
+                insns = blk.capstone.insns
+            except Exception:
+                return cur
+            if not insns:
+                return cur
+            mn = insns[-1].mnemonic
+            # x86 conditional jumps start with 'j' but are not 'jmp'.
+            if mn.startswith("j") and mn != "jmp":
+                cur = insns[-1].address + insns[-1].size
+                continue
+            return cur
+        return cur
 
     # ------------------------------------------------------------------
     # Constraint solver
@@ -475,6 +577,37 @@ class PathExecutor:
             simgr = self.project.factory.simgr(initial_state, save_unsat=False)
             simgr.use_technique(angr.exploration_techniques.LengthLimiter(max_length=2000))
             simgr.explore(find=sink_addr, step_func=_step, num_find=1)
+            # When sink_addr coincides with a tainted-conditional basic block,
+            # the in-block guard has not been evaluated yet at the moment a
+            # state reaches sink_addr. Step the found states a couple more
+            # times so _step has a chance to (a) observe the in-block guard,
+            # (b) apply included branch decisions, and (c) prune states whose
+            # include-constraint is unsatisfiable with the attack predicate.
+            #
+            # Then filter survivors by the **accept corridor**: only states
+            # that actually fell through every sanitizer cmp/jcc — i.e., whose
+            # bbl history reaches the post-sanitizer body block — count as
+            # reaching the sink. Without this filter, a state that took the
+            # sanitizer's reject branch (jumped to the else block) would be
+            # reported as reachable=true with a bogus counterexample, even
+            # though it represents the sanitizer DOING ITS JOB on that input.
+            if simgr.found:
+                body_entry = self._sink_body_entry(sink_addr)
+                extra = self.project.factory.simgr(simgr.found, save_unsat=False)
+                for _ in range(3):
+                    if not extra.active:
+                        break
+                    extra.step(step_func=_step)
+                candidates = list(extra.active) + list(extra.stashes.get("deadended", []))
+                survivors = [
+                    s for s in candidates
+                    if s.satisfiable()
+                    and body_entry in list(s.history.bbl_addrs)
+                ]
+                if survivors:
+                    simgr.stashes["found"] = survivors
+                else:
+                    simgr.stashes["found"] = []
         except Exception as exc:
             result["error"] = str(exc)
             result["success"] = True

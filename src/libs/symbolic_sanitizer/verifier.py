@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional
 
 from .path_executor import PathExecutor
 from .dwarf_resolver import line_to_addr, func_entry, nearest_line_addr
+from .branch_scanner import _source_function_name
 
 
 def _resolve_sink_addr(binary_path: str, path: Dict[str, Any], ex: PathExecutor) -> tuple[int | None, str | None]:
@@ -40,7 +41,12 @@ def verify_with_decisions(
     angr_base = ex.project.loader.main_object.min_addr
 
     if source_mode == "libc_stdin":
-        state = ex.initial_state_libc_stdin()
+        src_func = _source_function_name(path)
+        func_addr = ex.func_addr(src_func) if src_func else None
+        if func_addr is not None:
+            state = ex.initial_state_libc_stdin_at(func_addr)
+        else:
+            state = ex.initial_state_libc_stdin()
         degraded = None
     elif source_mode == "mid_function":
         src_file = path["source"]["file_path"]

@@ -1,7 +1,7 @@
 # Symbolic Sanitizer Redesign — Path-Guided Selective Symbolic Execution
 
 **Date:** 2026-05-26
-**Status:** Draft (pending user review)
+**Status:** Reconciled with implementation (2026-05-26 evening pass; see §11 Change Log)
 **Supersedes:** `2026-05-23-symbolic-sanitizer-refactor-design.md`
 
 ## 1. Motivation
@@ -55,14 +55,27 @@ This redesign:
 
 ## 3. Architecture
 
-### 3.1 MCP Tool Surface (4 tools)
+### 3.1 MCP Tool Surface (4 core + 2 compile helpers)
 
 | Tool | Input | Output | Agent involved |
 |------|-------|--------|----------------|
 | `parse_sarif` | `sarif_path`, `dataset_root` | `paths[]` — each path includes source/sink/intermediate nodes with absolute paths AND the source code of each enclosing function (deduped by `(file, function)`) | No |
-| `build_binary` | `source_file`, `source_api`, `compile_script`, `dataset_path` | `{binary_path, dwarf_ok: bool, source_mode: "libc_stdin"\|"mid_function"\|"entry_fallback"}` | No |
-| `scan_path_branches` | `binary_path`, `path` | `{tainted_branches[]}` — each branch: `{branch_id, file, line, condition_src, surrounding_code (5 lines), taint_vars[]}` | No |
-| `verify_with_decisions` | `binary_path`, `path`, `branch_decisions: {branch_id: bool}`, `attack_predicate` | `{reachable, counterexample, sat_branches, paths_explored, degraded?: str}` | No |
+| `build_binary` | `source_file`, `source_api`, `compile_script`, `dataset_path?` | `{binary_path, dwarf_ok: bool, source_mode: "libc_stdin"\|"mid_function"\|"entry_fallback"}` | No |
+| `scan_path_branches` | `binary_path`, `path`, `source_mode` | `{tainted_branches[]}` — see §3.3 for entry schema (one entry per conditional jump address, with `alternatives[]` listing the fork-side guards) | No |
+| `verify_with_decisions` | `binary_path`, `path`, `source_mode`, `branch_decisions: {branch_id: bool}`, `attack_predicate` | `{reachable, counterexample, sat_branches, paths_explored, degraded?: str}` | No |
+| `resolve_compile_config` (helper) | `dataset_path` | `{found, compile_script?}` | No |
+| `write_compile_config` (helper) | `dataset_path`, `script_content?` | writes `compile.sh`; default template enforces `-g -O0 -fno-inline` and forwards `dataset_path` as `$4` | No |
+
+`source_mode` is returned by `build_binary` and **threaded explicitly** by the
+caller into both `scan_path_branches` and `verify_with_decisions`. We do not
+hide it as tool-internal state — keeping the tools pure-functional makes the
+pipeline easier to test and resume.
+
+`dataset_path` on `build_binary` is **optional and forwarded as the 4th
+positional arg to `compile.sh`**. Different datasets (Juliet, SARD, custom
+benches) live under different roots; the compile script is responsible for
+using `$4` to resolve testcasesupport / shared headers / multi-file
+companions. Spec does not hardcode any dataset root.
 
 The agent's sole reasoning happens **between `scan_path_branches` and
 `verify_with_decisions`**: pick which branches to treat as sanitizers, then
@@ -116,14 +129,27 @@ DWARF is reliable.
 Returns `source_mode`:
 - `libc_stdin` — SARIF source-node API name is in the built-in libc list
   (`scanf, fscanf, sscanf, fgets, gets, getc, getchar, read, recv, fread`).
-  Runtime uses `full_init_state(stdin=SimFileStream(content=BVS))` plus
-  explicit hooks for common scanf/fread-style source APIs.
+  Runtime **starts at the enclosing function's entry via `call_state`** when
+  the source node's function name can be resolved (from the SARIF
+  `function_sources` table or DWARF symbol lookup). The scanf/fread
+  SimProcedure hooks write symbolic bytes directly into the destination
+  pointer, so no `SimFileStream` is required and we avoid running through
+  `_start → main → …` which can blow the step budget on benchmarks like
+  Juliet `_01` variants. Only when the enclosing function cannot be
+  resolved do we fall back to `full_init_state(stdin=SimFileStream(BVS))`.
 - `mid_function` — DWARF resolves the source `file:line` to an address; runtime
   uses `project.factory.call_state(addr=source_addr)` and stores symbolic BVs
-  into the variables named by the SARIF source node.
+  into a scratch buffer indexed by the attack predicate's `byte_offset`.
 - `entry_fallback` — DWARF cannot map the source line (e.g. inlined despite
   `-fno-inline`, or symbol stripped); runtime falls back to
   `call_state(func_entry_addr)`. Result is marked `degraded`.
+
+Note on the scanf-family SimProcedure: `num_args` MUST be set explicitly
+(via constructor) so that angr's calling-convention resolver pulls the
+variadic destination pointers. Declaring `def run(self, *args)` yields
+`num_args=0` and the hook silently injects zero bytes — taint never reaches
+the program and every downstream conditional is concrete-True. This is a
+non-obvious angr footgun and is enforced in `path_executor._make_scanf_hook`.
 
 #### `scan_path_branches`
 
@@ -135,38 +161,65 @@ Sole purpose: enumerate the tainted-branch candidates the agent must rule on.
 3. Walk the path: `explore(find=next_intermediate_addr, ...)` from source
    through every intermediate, stopping just before sink.
 4. At every conditional jump while exploring, inspect the guard expression's
-   AST. If any leaf is annotated with a `taint_id`, record:
+   AST. If any leaf depends on a tainted byte (`sym_byte_*`), record an entry
+   keyed by the guard's basic-block address:
 
    ```
    {
-     "branch_id": "b_<sha1[:8]>",
+     "branch_id": "b_<sha1[:8]>",          # stable: hash of (guard_addr, op-chain)
      "file": "<resolved via DWARF rev-lookup>",
      "line": <int>,
      "condition_src": "<text from source via file:line>",
      "surrounding_code": "<+/-2 lines>",
-     "taint_vars": ["data", ...]    # DWARF local var names whose
-                                    # storage feeds the guard
+     "taint_vars": ["sym_byte_0", ...],
+     "alternatives": [                      # both fork sides of the same jump
+       {"guard_repr": "<expr taken side>", "taint_vars": [...]},
+       {"guard_repr": "<expr not-taken side>", "taint_vars": [...]}
+     ]
    }
    ```
 
-5. **Do not solve, do not continue past sink.** Return only the list.
+   **branch_id stability**: `branch_id` MUST be deterministic across separate
+   Python processes given the same binary + same source line. Hashing the
+   claripy AST's `repr` is forbidden, because claripy assigns monotonically
+   increasing internal serial numbers to BVS (`sym_byte_0_3_8` vs.
+   `sym_byte_0_42_8` for the same source variable). Instead hash
+   `(guard_addr, op_chain_fingerprint)`. Stability is required because the
+   agent must round-trip these IDs through `verify_with_decisions`.
 
-`taint_vars` are resolved by walking DWARF location lists for the function: for
-each symbolic leaf in the guard, find which `DW_TAG_variable` covers its
-storage (register or stack offset) at the current PC.
+   **Dedup by conditional, not by fork side**: a single conditional jump
+   produces two forked states (taken / not_taken). They share the same
+   `guard_addr` and therefore the same `branch_id`; the scanner merges them
+   into one entry whose `alternatives[]` lists both guard expressions. The
+   agent picks `branch_decisions[branch_id] = true` to mark the *conditional*
+   as a sanitizer — not to take one specific side. See §3.3 verify for the
+   decision semantics.
+
+5. **Do not solve, do not continue past sink** — except for the in-block
+   conditional at `sink_addr` itself; see §3.5.
 
 #### `verify_with_decisions`
 
 1. Fresh state with same `source_mode` initialization.
-2. Walk the path the same way as `scan_path_branches`, but at each tainted
-   branch with `branch_decisions[branch_id] == true`, add the guard expression
-   as a hard constraint (forcing the sanitizer's **accept** side). For
-   `false`, do nothing (angr explores both sides naturally).
-3. Resolve `attack_predicate.taint_var` to its symbolic BV via DWARF, build the
-   comparison (`uge/ule/eq` per `op` and `signed`), add as constraint.
-4. `explore(find=sink_addr)`. Return `{reachable, counterexample (32 bytes
-   hex), paths_explored, sat_branches: [branch_ids whose include constraint
-   was satisfied]}`.
+2. Compose the symbolic input bytes `sym_bytes[byte_offset:byte_offset+width]`
+   (big- or little-endian per `project.arch`), build the predicate
+   comparison op (`uge/ule/eq/…`, signed flag selects signed opcodes), and
+   add it to the initial state's constraints **before** explore.
+3. Walk the path the same way as `scan_path_branches`. For each tainted
+   branch encountered:
+   - `branch_decisions[branch_id] == true` → treat the conditional as a
+     sanitizer. The state's path-condition guard at this jump is already
+     part of its constraint set; the step function additionally checks
+     satisfiability of that guard with the current constraints (including
+     the attack predicate). If unsat, the state is pruned (the sanitizer
+     incompatible with the attack on this path). If sat, record
+     `branch_id` in `sat_branches`.
+   - `branch_decisions[branch_id]` missing or `false` → no pruning; angr
+     explores both fork sides naturally.
+4. `explore(find=sink_addr)`. Apply the §3.5 extra-step extension so the
+   in-block conditional at `sink_addr` is captured. Return
+   `{reachable, counterexample (32 bytes hex), paths_explored,
+   sat_branches: [branch_ids whose include constraint was satisfied]}`.
 5. If any step degrades (e.g. DWARF lookup miss for a specific intermediate),
    set `degraded` field with a short reason; the result is still returned.
 
@@ -174,20 +227,104 @@ storage (register or stack offset) at the current PC.
 
 ```json
 {
-  "taint_var": "data",
+  "byte_offset": 0,
+  "width": 4,
   "op": ">=" | "<=" | "==" | "!=" | ">" | "<",
   "value": 65536,
-  "width": 4,
   "signed": false
 }
 ```
 
-- `taint_var` — DWARF-visible local in the source function. Resolved by name
-  at the binary location corresponding to the SARIF source node.
-- `width` — byte width of the comparison (1/2/4/8).
+- `byte_offset` — index into the symbolic input buffer (`libc_stdin`: byte
+  position in stdin stream as consumed by the first scanf/fread hook;
+  `mid_function`: byte position in the scratch buffer the mid-function entry
+  point allocates). The agent picks it from the SARIF source node's
+  first-read variable.
+- `width` — byte width of the comparison (1/2/4/8). The bytes are composed
+  in the project's native endianness so the BV matches in-memory layout.
 - `signed` — selects signed vs unsigned comparison opcodes.
 
+We **deliberately do not** use a DWARF-resolved `taint_var` name. The
+named-variable approach (proposed in an earlier draft) requires walking
+DWARF location lists and matching storage to BVS leaves at the SARIF source
+PC, which is brittle under optimization, missing for stripped binaries, and
+non-trivial to keep in sync with angr's memory model. `byte_offset` is
+stable, language-agnostic, and sufficient for every Juliet rule_id we have
+tested.
+
 Compound predicates (AND/OR) are deferred to v2.
+
+### 3.5 Sink-At-Sanitizer Semantics
+
+CodeQL frequently places the sink at the *expression* of the sanitizer's
+`if` (`cpp/integer-overflow-tainted` is the canonical case: sink column
+points at `abs((long)data)` inside `if (abs((long)data) < sqrt(UINT_MAX))`).
+Naively `explore(find=sink_addr)` stops at the first instruction of the
+basic block that ends in the tainted conditional jump — *before* that jump
+has been evaluated. The result is empty `tainted_branches[]` (scanner) or
+trivially `reachable=true` without any sanitizer constraint applied
+(verifier).
+
+To recover the intended semantics without modifying the SARIF, both
+`scan_path_branches` and `verify_with_decisions` extend exploration past
+`sink_addr`:
+
+1. Run `simgr.explore(find=sink_addr, num_find=4)` as before.
+2. If any state reaches `sink_addr`, take that state's basic block one to
+   three more steps with the `step_func` still attached. This lets the
+   in-block conditional fork, the branch collector observe its guard, and
+   the verifier apply branch decisions / prune by satisfiability.
+3. Verifier marks `reachable=true` iff at least one post-extension
+   survivor is satisfiable under the combined constraint set (path
+   constraints + included branch guards + attack predicate) **AND its bbl
+   history reaches the sink body entry** (see below). Counterexample is
+   extracted from the first such survivor.
+
+**Accept-corridor filter (mandatory).** After the extra steps, the
+forked descendants of the original found state split between the
+sanitizer's *accept* side (fall-through past the cmp/jcc chain) and its
+*reject* side (jumped to the else block). Without filtering, both kinds
+satisfy `state.satisfiable()` and the verifier would happily pick a
+reject-side state as its witness — producing `reachable=true` with a
+counterexample that the sanitizer *actually catches*. This is a real
+correctness bug; the §3.5 fix mandates:
+
+```python
+def sink_body_entry(project, sink_addr, max_walk=8):
+    """Walk fall-through (non-taken cmp/jcc edges) from sink_addr until we
+    leave the conditional chain. The first non-conditional block reached is
+    the 'sink body entry' — the address execution lands at AFTER passing
+    every sanitizer guard on the accept side."""
+    cur = sink_addr
+    for _ in range(max_walk):
+        blk = project.factory.block(cur)
+        last = blk.capstone.insns[-1]
+        if last.mnemonic.startswith('j') and last.mnemonic != 'jmp':
+            cur = last.address + last.size   # fall-through
+            continue
+        return cur
+    return cur
+
+# In verifier post-extra-step filtering:
+body_entry = sink_body_entry(project, sink_addr)
+survivors = [s for s in candidates
+             if s.satisfiable()
+             and body_entry in list(s.history.bbl_addrs)]
+```
+
+When `sink_addr` already points inside the unsafe body (e.g. SARIF places
+sink at the actual `imul` instruction, not at the sanitizer's `if`),
+`sink_body_entry` returns `sink_addr` unchanged and the filter is a
+no-op for all found states. The filter only kicks in when SARIF placed
+sink on the sanitizer line.
+
+Consequence for interpretation: when the SARIF sink coincides with the
+sanitizer's `if`, `reachable=true` with a counterexample bytes value that
+falls inside the sanitizer's accept range means the sanitizer **as
+compiled** is bypassable on that input — even though the source-level
+sanitizer looks correct. This is a real binary-level finding (typically
+caused by signed-cast or constant-folding quirks during compilation) and
+should be reported as `bypassable`, *not* as "confirmed false positive".
 
 ## 4. Component Layout
 
@@ -220,24 +357,32 @@ specific into `verifier.py`.
 
 ## 5. Compile Script Contract
 
-compile.sh is now called as:
+compile.sh is called as:
 
 ```
-bash compile.sh <source_src> <output_binary> <lang>
+bash compile.sh <source_src> <output_binary> <lang> [<dataset_root>]
 ```
 
-Template (Juliet/POSIX):
+`<dataset_root>` is the 4th positional arg, forwarded by `build_binary` from
+its `dataset_path` parameter. The compile script is responsible for using it
+to resolve dataset-specific includes (testcasesupport headers, shared utility
+sources, multi-file companions); the spec does not hardcode any particular
+layout. Scripts that ignore `$4` keep working on standalone single-file
+sources.
+
+Default template (no dataset assumption):
 
 ```bash
 #!/bin/bash
-SRC="$1"; OUT="$2"; LANG="${3:-c}"
+# Args: <source_src> <output_binary> <lang> [<dataset_root>]
+SRC="$1"; OUT="$2"; LANG="${3:-c}"; SRCROOT="${4:-}"
 case "$LANG" in
   cpp) CC=g++ ; STD=-std=c++17 ;;
   *)   CC=gcc ; STD=-std=c11   ;;
 esac
-"$CC" $STD -g -O0 -fno-inline \
-  -I"$JULIET_ROOT/testcasesupport" \
-  "$SRC" -o "$OUT" -lm 2>&1
+INC=""
+[ -n "$SRCROOT" ] && INC="-I$SRCROOT"
+"$CC" $STD -g -O0 -fno-inline $INC "$SRC" -o "$OUT" -lm 2>&1
 ```
 
 `-g -O0 -fno-inline` is non-negotiable; the DWARF resolver depends on it. If
@@ -317,3 +462,36 @@ All lookups return `None` on failure; callers degrade gracefully.
 - pyelftools dependency added to project requirements.
 - How `scan_path_branches` handles loops on the path (initial pass: rely on
   angr's default veritesting/loop bound; do not unroll explicitly).
+
+## 11. Change Log
+
+**2026-05-26 evening — reconciliation pass after first end-to-end test on
+`CWE190_Integer_Overflow__unsigned_int_fscanf_square_01.c`:**
+
+- §3.1 — tool surface clarified as **4 core + 2 compile helpers**; legacy
+  `build_harness` compatibility wrapper removed; `source_mode` documented
+  as a caller-threaded arg; `build_binary` gains optional `dataset_path`.
+- §3.3 `build_binary` — `libc_stdin` start changed from `full_init_state`
+  to `call_state(source_function_entry)` whenever the source-enclosing
+  function is resolvable. Added explicit warning about angr's
+  `num_args=0` footgun in `_make_scanf_hook`.
+- §3.3 `scan_path_branches` — output schema gains `alternatives[]`;
+  branches deduped by `guard_addr`; `branch_id` stability requirement
+  formalised (no `ast!r` in the hash).
+- §3.3 `verify_with_decisions` — predicate now composed from
+  `byte_offset`/`width` and added pre-explore; branch decision semantics
+  re-stated as satisfiability-pruning rather than guard-side-forcing.
+- §3.4 — attack predicate schema migrated from `taint_var` to
+  `byte_offset`; rationale recorded.
+- §3.5 (new) — sink-at-sanitizer extra-step semantics; interpretation
+  guidance for "bypassable" vs "false positive".
+- §5 — compile.sh accepts `dataset_root` as 4th positional arg; default
+  template no longer hardcodes any project path.
+- §3.5 — added the **accept-corridor filter** to fix a real correctness
+  bug where `verify_with_decisions` could report `reachable=true` with a
+  counterexample from a state that actually jumped to the sanitizer's
+  reject side. Verified on CWE-190 `_01.c`: pre-fix returned a bogus
+  `cex=0x80000000` (which fails `data ≥s 0xffff0002`); post-fix returns
+  `cex=0xffff8000` (truly inside the binary-level bypass window
+  `[0xffff0002, 0xffffffff]`), and `attack: data == 65536` now correctly
+  reports `reachable=false`.
