@@ -48,6 +48,101 @@ def line_to_addr(binary_path: str, source_file: str, line_number: int) -> Option
         f.close()
 
 
+from elftools.dwarf.locationlists import LocationEntry, LocationParser
+
+
+def func_entry(binary_path: str, func_name: str) -> Optional[int]:
+    f, dwarf = _open_dwarf(binary_path)
+    if dwarf is None:
+        return None
+    try:
+        for cu in dwarf.iter_CUs():
+            for die in cu.iter_DIEs():
+                if die.tag != "DW_TAG_subprogram":
+                    continue
+                name_attr = die.attributes.get("DW_AT_name")
+                if name_attr is None:
+                    continue
+                if name_attr.value.decode("utf-8", "replace") != func_name:
+                    continue
+                low_pc = die.attributes.get("DW_AT_low_pc")
+                if low_pc is None:
+                    continue
+                return low_pc.value
+        return None
+    finally:
+        f.close()
+
+
+def _decode_simple_location(expr_bytes: bytes) -> Optional[Storage]:
+    """Decode a single-op DWARF expression. Handles common cases:
+    DW_OP_regN (0x50..0x6f), DW_OP_fbreg (0x91 + sleb128), DW_OP_breg6 (0x76 + sleb128).
+    """
+    if not expr_bytes:
+        return None
+    op = expr_bytes[0]
+    if 0x50 <= op <= 0x6f:
+        return Storage(kind="register", value=op - 0x50)
+    if op == 0x91:  # DW_OP_fbreg <sleb128>
+        offset = _read_sleb128(expr_bytes[1:])
+        return Storage(kind="frame_offset", value=offset)
+    if op == 0x76:  # DW_OP_breg6 (rbp) <sleb128>  -- treat like frame offset
+        offset = _read_sleb128(expr_bytes[1:])
+        return Storage(kind="frame_offset", value=offset)
+    return None
+
+
+def _read_sleb128(data: bytes) -> int:
+    result = 0
+    shift = 0
+    for b in data:
+        result |= (b & 0x7f) << shift
+        shift += 7
+        if (b & 0x80) == 0:
+            if b & 0x40:  # sign bit
+                result -= (1 << shift)
+            return result
+    return result
+
+
+def var_storage(binary_path: str, func_name: str, var_name: str, pc: int) -> Optional[Storage]:
+    f, dwarf = _open_dwarf(binary_path)
+    if dwarf is None:
+        return None
+    try:
+        loc_lists = dwarf.location_lists()
+        parser = LocationParser(loc_lists) if loc_lists is not None else None
+        for cu in dwarf.iter_CUs():
+            for die in cu.iter_DIEs():
+                if die.tag != "DW_TAG_subprogram":
+                    continue
+                name_attr = die.attributes.get("DW_AT_name")
+                if name_attr is None or name_attr.value.decode("utf-8", "replace") != func_name:
+                    continue
+                for child in die.iter_children():
+                    if child.tag not in ("DW_TAG_variable", "DW_TAG_formal_parameter"):
+                        continue
+                    cname = child.attributes.get("DW_AT_name")
+                    if cname is None or cname.value.decode("utf-8", "replace") != var_name:
+                        continue
+                    loc_attr = child.attributes.get("DW_AT_location")
+                    if loc_attr is None:
+                        return None
+                    form = loc_attr.form
+                    if form in ("DW_FORM_exprloc", "DW_FORM_block", "DW_FORM_block1"):
+                        return _decode_simple_location(bytes(loc_attr.value))
+                    if parser is not None and parser.attribute_has_location(loc_attr, cu["version"]):
+                        loclist = parser.parse_from_attribute(loc_attr, cu["version"])
+                        for entry in loclist:
+                            if isinstance(entry, LocationEntry):
+                                if entry.begin_offset <= pc < entry.end_offset:
+                                    return _decode_simple_location(bytes(entry.loc_expr))
+                    return None
+        return None
+    finally:
+        f.close()
+
+
 def addr_to_line(binary_path: str, addr: int) -> Optional[Tuple[str, int]]:
     f, dwarf = _open_dwarf(binary_path)
     if dwarf is None:
