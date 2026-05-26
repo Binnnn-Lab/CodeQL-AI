@@ -33,4 +33,6 @@
 ql查询文件位于：/path/to/query.ql
 误报的源代码位于：/path/to/source/code.cpp
 
-请你调用mcp工具来完成codeql查询的优化
+请你调用mcp工具来完成codeql查询的优化，不要执行其他命令，直接使用提供给你的mcp tool来读取和写入文件，这些文件的路径是真是存在的
+
+Important: 不要在工作区里找这几个文件！直接使用mcp tool来读取，不要向我申请任何读取文件的请求！

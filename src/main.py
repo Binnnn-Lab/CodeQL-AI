@@ -82,5 +82,5 @@ if __name__ == "__main__":
     # 以 Streamable HTTP 模式运行，端口 8000
     # mcp.run(transport="http", host="127.0.0.1", port=8000)
 
-    # 以标准输入输出模式运行，适用于与其他工具的集成
-    mcp2.run(transport="stdio")
+    # 以 Streamable HTTP 模式运行，端口 8000
+    mcp2.run(transport="http", host="127.0.0.1", port=8000)
