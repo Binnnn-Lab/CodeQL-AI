@@ -38,6 +38,45 @@
     *   **输入**: `patched_ql_path`  和 `new_content` (包含新 Sanitizer 定义的完整或片段 QL 代码)。
     *   **目的**: 将新的 Sanitizer 逻辑写入查询脚本，消除误报。
 
+### Patched QL 输出规范
+
+所有 patched QL 文件**必须**写入统一的输出目录，而非直接覆盖原始 QL 文件：
+
+*   **输出目录**: `<project_root>/scripts/.CODEQL-AI/patched-ql/`
+*   **文件命名**: 使用原始 QL 文件名，例如原始文件为 `CWE-190.ql`，则输出为 `scripts/.CODEQL-AI/patched-ql/CWE-190.ql`。
+*   **`patched_ql_path` 必须使用绝对路径**。
+
+### 维护 QL 映射表
+
+每次调用 `patch_ql` 后，你**必须**更新映射表 JSON 文件 `<project_root>/scripts/.CODEQL-AI/ql_mappings.json`。
+
+映射表格式：
+```json
+{
+    "mappings": [
+        {
+            "original_ql": "/absolute/path/to/original.ql",
+            "patched_ql": "/absolute/path/to/scripts/.CODEQL-AI/patched-ql/original.ql"
+        }
+    ]
+}
+```
+
+维护规则：
+1.  **路径必须使用绝对路径**。
+2.  **同一原始 QL 不重复添加**：如果 `original_ql` 已存在于 `mappings` 中，只需用新的 patched 内容覆盖 `patched_ql` 指向的文件，无需新增条目。
+3.  **首次处理某个原始 QL 时**，向 `mappings` 数组追加一条新记录。
+4.  如果文件不存在则创建，如果已存在则读取后追加/更新。
+
+此映射表可供 `scripts/swap_ql.py` 使用，实现批量替换和还原：
+```bash
+# 用 patched QL 替换原始文件（自动备份到 scripts/.CODEQL-AI/old-ql/）
+python3 scripts/swap_ql.py apply scripts/.CODEQL-AI/ql_mappings.json
+
+# 还原为原始文件
+python3 scripts/swap_ql.py restore scripts/.CODEQL-AI/ql_mappings.json
+```
+
 ## Step 5: 保存可复用经验
 如果 Step 4 中确认某个项目内部函数或模式具有 Sanitizer 效果，请使用工具 `save_experience_pattern` 将其保存为结构化经验，供后续 database 分析复用。
 *   **输入**: 一个 JSON 对象，至少包含：

@@ -1,6 +1,7 @@
 import asyncio
+import json
 import re
-from typing import List
+from typing import List, Optional
 import shlex
 from pathlib import Path
 
@@ -233,32 +234,66 @@ def read_function_implementation(function_name: str, file_path: str) -> dict:
     
     return {"success": True, "error": f"可能为lib库标准函数: {function_name}"}
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+PATCHED_QL_DIR = PROJECT_ROOT / "scripts" / ".CODEQL-AI" / "patched-ql"
+QL_MAPPINGS_PATH = PROJECT_ROOT / "scripts" / ".CODEQL-AI" / "ql_mappings.json"
+
+
+def _update_ql_mappings(original_ql: str, patched_ql: str) -> None:
+    """更新 ql_mappings.json，同一 original_ql 不重复添加。"""
+    QL_MAPPINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    if QL_MAPPINGS_PATH.exists():
+        data = json.loads(QL_MAPPINGS_PATH.read_text(encoding="utf-8"))
+    else:
+        data = {"mappings": []}
+
+    for entry in data["mappings"]:
+        if entry["original_ql"] == original_ql:
+            entry["patched_ql"] = patched_ql
+            break
+    else:
+        data["mappings"].append({
+            "original_ql": original_ql,
+            "patched_ql": patched_ql,
+        })
+
+    QL_MAPPINGS_PATH.write_text(json.dumps(data, indent=4, ensure_ascii=False), encoding="utf-8")
+
+
 def patch_ql(
     patched_ql_path: str,
-    new_content: str
+    new_content: str,
+    original_ql_path: Optional[str] = None,
 ) -> dict:
     """
-    将新内容写入指定的 QL 文件
-    
+    将新内容写入指定的 QL 文件，并自动维护映射表。
+
     Args:
-        patched_ql_path: 目标 QL 文件路径
+        patched_ql_path: 目标 QL 文件路径（建议位于 scripts/.CODEQL-AI/patched-ql/）
         new_content: 要写入的新内容
-    
+        original_ql_path: 被修补的原始 QL 文件的绝对路径（可选，提供后自动更新映射表）
+
     Returns:
         包含执行结果的字典
     """
     file_path = Path(patched_ql_path)
-    
+
     try:
-        # 确保父目录存在
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # 写入新内容
         file_path.write_text(new_content, encoding='utf-8')
-        
+
+        if original_ql_path:
+            _update_ql_mappings(
+                str(Path(original_ql_path).resolve()),
+                str(file_path.resolve()),
+            )
+
         return {
             "success": True,
             "patched_ql_path": str(file_path),
+            "patched_ql_dir": str(PATCHED_QL_DIR),
+            "ql_mappings_path": str(QL_MAPPINGS_PATH),
             "message": f"QL 文件已成功写入: {file_path}"
         }
     except Exception as e:

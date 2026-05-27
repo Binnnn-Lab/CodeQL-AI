@@ -38,11 +38,17 @@ def read_function_implementation_tool(function_name: str, file_path: str) -> dic
 
 @mcp.tool(
     name="patch_ql",
-    description="将新内容写入指定的 QL 文件"
+    description=(
+        "将优化后的 QL 查询写入指定路径，并自动维护 original→patched 映射表。\n"
+        "参数说明：\n"
+        "- patched_ql_path (必填): patched QL 的输出绝对路径，必须位于 scripts/.CODEQL-AI/patched-ql/ 目录下\n"
+        "- new_content (必填): 完整的优化后 QL 文件内容\n"
+        "- original_ql_path (必填): 被修补的原始 QL 文件的绝对路径，用于自动更新 scripts/.CODEQL-AI/ql_mappings.json 映射表"
+    ),
 )
-def patch_ql_tool(patched_ql_path: str, new_content: str) -> dict:
-    """将新内容写入指定的 QL 文件"""
-    return patch_ql(patched_ql_path, new_content)
+def patch_ql_tool(patched_ql_path: str, new_content: str, original_ql_path: str = "") -> dict:
+    """将优化后的 QL 查询写入 patched-ql 目录，并更新映射表"""
+    return patch_ql(patched_ql_path, new_content, original_ql_path or None)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--stdio":
