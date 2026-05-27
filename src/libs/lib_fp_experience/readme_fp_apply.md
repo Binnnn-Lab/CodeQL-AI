@@ -72,7 +72,7 @@
 
 **输入**：用户确认要应用的经验 + 目标 QL 文件。
 
-**输出**：向用户展示的修改方案（diff 形式），确认后写入 `src/ql_queries/<原文件名>_fp_optimized.ql`。
+**输出**：向用户展示的修改方案（diff 形式），确认后写入 `scripts/.CODEQL-AI/patched-ql/<原文件名>.ql`。
 
 **使用工具**：`read_source_context`（如需查看源码上下文）、`patch_ql`
 
@@ -99,18 +99,20 @@
 
 **使用工具**：`patch_ql`
 
-*	**目录**：`src/ql_queries/`（如不存在会自动创建）。
-*	**命名规则**：`<原文件名>_fp_optimized.ql`
+*	**目录**：`scripts/.CODEQL-AI/patched-ql/`（如不存在会自动创建）。
+*	**命名规则**：使用原始 QL 文件名，例如 `CWE-190.ql`。
+*	**`patched_ql_path` 必须使用绝对路径**。
 *	**禁止覆盖原始 QL 文件**。
 *	同一 QL 被多条经验同时优化时，合并修改后输出一个文件。
+*	调用 `patch_ql` 时会自动维护 `scripts/.CODEQL-AI/ql_mappings.json` 映射表，供 `scripts/swap_ql.py` 批量替换和还原。
 
 ## Step 5: 后续验证建议
 
 **输出**：验证建议步骤。
 
 修改完成后，向用户建议：
-1.	使用 `src/ql_queries/` 下优化后的 QL 文件对项目代码运行 CodeQL 扫描。
-2.	对比使用原始 QL 和 `_fp_optimized.ql` 的结果，确认误报是否减少。
+1.	使用 `scripts/.CODEQL-AI/patched-ql/` 下优化后的 QL 文件对项目代码运行 CodeQL 扫描。
+2.	对比使用原始 QL 和 patched QL 的结果，确认误报是否减少。
 3.	如果优化有效，使用 `update_experience_validation` 提升该经验的置信度。
 4.	如果优化无效，记录失败原因。
 
@@ -120,7 +122,7 @@
 *	在调用工具前，用中文简要说明分析思路。
 *	匹配阶段必须使用 `match_experience_to_ql` 工具。
 *	**任何对 QL 文件的修改，必须先向用户展示修改方案（diff 形式），用户确认后才能写入。**
-*	**禁止修改原始 QL 文件。** 优化后的 QL 文件统一输出到 `src/ql_queries/` 目录，用 `_fp_optimized.ql` 后缀标识。
+*	**禁止修改原始 QL 文件。** 优化后的 QL 文件统一输出到 `scripts/.CODEQL-AI/patched-ql/` 目录，使用原始 QL 文件名。
 *	同一 QL 文件可能被多条经验同时匹配，注意合并修改，避免相互覆盖。
 
 ---

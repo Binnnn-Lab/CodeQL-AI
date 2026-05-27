@@ -2,8 +2,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_RULE_MAP = PROJECT_ROOT / "knowledge" / "rule_id_map.json"
+from libs.config import DEFAULT_RULE_MAP
+
 DEFAULT_SOURCE_ROOT = "/data/benchmark/juliet/juliet-test-suite-c"
 
 

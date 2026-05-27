@@ -6,9 +6,7 @@
 import re
 from pathlib import Path
 
-
-CONFIG_QL_OUTPUT_DIR = str(Path(__file__).parent) + "/optimized_codeql_queries/"
-CONFIG_QL_OUPUT_SUFFIX = "_optimized.ql"
+from libs.config import PATCHED_QL_DIR
 
 
 def _read_text(file_path: str) -> str:
@@ -16,13 +14,6 @@ def _read_text(file_path: str) -> str:
     if not path.exists():
         raise FileNotFoundError(f"文件不存在: {path}")
     return path.read_text(encoding="utf-8")
-
-
-def _write_text(target_path: str, content: str) -> str:
-    path = Path(target_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-    return str(path)
 
 
 def inspect_ql_query(ql_path: str) -> dict:
@@ -76,10 +67,9 @@ def inspect_source_code(source_code_path: str) -> dict:
     }
 
 
-def write_ql_query(ql_name: str, content: str) -> dict:
-    """将优化后的 QL 查询内容写回文件。"""
-    try:
-        target_path = _write_text(CONFIG_QL_OUTPUT_DIR + ql_name.replace(".ql", CONFIG_QL_OUPUT_SUFFIX), content)
-        return {"success": True, "ql_path": target_path, "ql_name": ql_name,  "message": "QL 查询已成功写入文件。"}
-    except Exception as exc:
-        return {"success": False, "error": str(exc), "ql_path": ql_name}
+def write_ql_query(ql_name: str, content: str, original_ql_path: str = "") -> dict:
+    """将优化后的 QL 查询写入 scripts/.CODEQL-AI/patched-ql/，并自动维护映射表。"""
+    from libs.lib_sanitizer import patch_ql
+
+    target_path = str(PATCHED_QL_DIR / ql_name)
+    return patch_ql(target_path, content, original_ql_path or None)

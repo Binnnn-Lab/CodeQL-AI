@@ -19,7 +19,7 @@
 
 # Output
 
-你的输出是 1. 优化后的QL查询文件的文件名（只有文件名而不是路径，example：template.ql）和 2. 优化后的查询内容（完整的ql文件的内容）。确保优化后的查询能够正确地识别目标代码，并且不再误报输入的源代码。
+你的输出是 1. 优化后的QL查询文件的文件名（只有文件名而不是路径，example：template.ql）和 2. 优化后的查询内容（完整的ql文件的内容）。优化后的 QL 文件将自动写入 `scripts/.CODEQL-AI/patched-ql/` 目录。如果已知原始 QL 文件的绝对路径，可传入 `original_ql_path` 参数以自动维护 `scripts/.CODEQL-AI/ql_mappings.json` 映射表。确保优化后的查询能够正确地识别目标代码，并且不再误报输入的源代码。
 
 # Notable Points
 
