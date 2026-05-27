@@ -92,6 +92,30 @@
 整理原始误报实例引用列表，每项包含 `file`、`line`、`message` 等字段，用于追溯该知识来源于哪些误报。
 
 ## Step 5: 保存知识到数据库
+
+### 5a: 交互决策
+在保存之前，**必须先询问用户**是否需要人工确认经验的保存级别：
+
+> ❓ 是否需要人工确认经验保存级别？
+> 1. **是** — 由您决定 scope（repo / global）和 confidence（low / medium / high）
+> 2. **否** — 由我根据分析结果自动决策并直接保存
+
+*   **用户选"是"**：
+    1.  先询问 `scope`：`repo`（仅当前项目适用）还是 `global`（可跨项目迁移）。
+    2.  再询问 `confidence`：`low`（初步判断）/ `medium`（较有把握）/ `high`（非常确定）。
+    3.  使用用户选择的值调用 `save_fp_experience`。
+    4.  保存完成后向用户报告结果。
+*   **用户选"否"**：
+    1.  LLM 自行判断 `scope`：
+        *   模式依赖项目特有函数/命名约定 → `repo`。
+        *   模式基于语言特性/通用安全原则 → `global`。
+    2.  LLM 自行判断 `confidence`：
+        *   默认使用 `low`。
+        *   仅当同一规则出现大量一致告警且根因非常明确时，可用 `medium`。
+        *   **新经验永远不使用 `high`**。
+    3.  直接调用 `save_fp_experience` 保存，**无需再次询问用户**。
+
+### 5b: 调用保存
 使用工具 `save_fp_experience` 将分析结果持久化：
 *   **输入**：
     *   `repo_id`：仓库标识（如 `juliet-test-suite`）。
@@ -119,8 +143,7 @@
 # Constraints
 *   在调用工具前，请简要用中文说明你的分析思路。
 *   分析时优先阅读 key file 和 key code flow locations，避免过度扩大上下文。
-*   初始 `confidence` 必须为 `low`，只有经过多次验证才能通过 `update_experience_validation` 提升。
-*   `scope` 的判定：如果模式依赖项目独特的函数/命名约定，使用 `repo`；如果模式是基于语言特性或通用安全原则，使用 `global`。
+*   `scope` 和 `confidence` 的决策规则详见 Step 5a。新经验默认 `confidence: "low"`，只有经过多次验证才能通过 `update_experience_validation` 提升为 `high`。
 *   状态命名应保持语义清晰、可迁移（避免包含具体变量名或行号）。
 *   `pattern_summary` 应简洁但包含足够信息，便于后续 LLM 直接理解。
 *   不相关或重复的告警可以跳过，不需要为每条告警单独创建知识条目。
