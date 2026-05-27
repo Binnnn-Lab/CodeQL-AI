@@ -234,9 +234,7 @@ def read_function_implementation(function_name: str, file_path: str) -> dict:
     
     return {"success": True, "error": f"可能为lib库标准函数: {function_name}"}
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-PATCHED_QL_DIR = PROJECT_ROOT / "scripts" / ".CODEQL-AI" / "patched-ql"
-QL_MAPPINGS_PATH = PROJECT_ROOT / "scripts" / ".CODEQL-AI" / "ql_mappings.json"
+from libs.config import PATCHED_QL_DIR, QL_MAPPINGS_PATH
 
 
 def _update_ql_mappings(original_ql: str, patched_ql: str) -> None:

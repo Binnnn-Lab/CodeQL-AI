@@ -6,9 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_KNOWLEDGE_BASE = PROJECT_ROOT / "knowledge"
+from libs.config import DEFAULT_KNOWLEDGE_BASE
 
 ACTIVE_STATUSES = {"candidate", "active_low_confidence", "active", "active_high_confidence"}
 CONFIDENCE_ORDER = {

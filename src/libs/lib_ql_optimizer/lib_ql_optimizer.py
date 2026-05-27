@@ -6,8 +6,7 @@
 import re
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-PATCHED_QL_DIR = PROJECT_ROOT / "scripts" / ".CODEQL-AI" / "patched-ql"
+from libs.config import PATCHED_QL_DIR
 
 
 def _read_text(file_path: str) -> str:
