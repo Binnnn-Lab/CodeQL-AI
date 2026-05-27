@@ -31,11 +31,11 @@ def inspect_source_code_tool(source_code_path: str) -> dict:
 
 @mcp.tool(
     name="write_ql_query",
-    description="将优化后的 QL 查询写入指定文件，输入为ql文件的文件名（仅文件名，不含路径，example：query.ql）和新的ql查询内容（完整的ql查询内容）"
+    description="将优化后的 QL 查询写入 scripts/.CODEQL-AI/patched-ql/ 目录，输入为ql文件的文件名（仅文件名，不含路径，example：query.ql）、新的ql查询内容（完整的ql查询内容），以及可选的原始 QL 文件绝对路径（用于自动更新 ql_mappings.json 映射表）"
 )
-def write_ql_query_tool(ql_name: str, ql_content: str) -> dict:
-    """将优化后的 QL 查询写入指定文件"""
-    return write_ql_query(ql_name, ql_content)
+def write_ql_query_tool(ql_name: str, ql_content: str, original_ql_path: str = "") -> dict:
+    """将优化后的 QL 查询写入 patched-ql 目录，并更新映射表"""
+    return write_ql_query(ql_name, ql_content, original_ql_path)
 
 
 if __name__ == "__main__":
