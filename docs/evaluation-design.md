@@ -230,7 +230,101 @@ y 轴：秒
 
 ### Phase 3：各 Tool 独立运行（每个 tool 重复此阶段）
 
-对 Phase 2 产生的每条 CodeQL 告警，每个 tool 各自记录：
+本项目的 4 个 tool 分为两类，记录方式不同：
+
+| 类型 | Tool | verdict 来源 |
+|------|------|--------------|
+| Patch 类工具 | QL Optimizer / Function-Level Sanitizer / FP Experience | 先生成 patched QL，再重跑 CodeQL，与 baseline SARIF 比较 |
+| 直接验证类工具 | Symbolic Sanitizer | 直接对 baseline SARIF 中的告警输出 vulnerable / safe / error |
+
+#### Phase 3A：Patch 类工具
+
+适用于 **QL Optimizer / Function-Level Sanitizer / FP Experience**。
+
+执行流程：
+
+```text
+baseline SARIF + 原始 QL + 源码上下文
+        ↓
+tool 生成 patched QL
+        ↓
+python3 scripts/swap_ql.py apply scripts/.CODEQL-AI/ql_mappings.json --force
+        ↓
+重跑 CodeQL，生成 patched SARIF
+        ↓
+python3 scripts/swap_ql.py restore scripts/.CODEQL-AI/ql_mappings.json
+        ↓
+比较 baseline SARIF 与 patched SARIF，得到每条告警的 verdict
+```
+
+patch 生成阶段需要记录：
+
+| 记录项 | 说明 |
+|--------|------|
+| tool_name | 工具名称 |
+| tool_config | 关键配置（模型、prompt、依赖版本等） |
+| cwe_id | CWE 类型 |
+| original_ql_path | 原始 QL 文件路径 |
+| patched_ql_path | patched QL 文件路径 |
+| ql_mappings_path | `scripts/.CODEQL-AI/ql_mappings.json` |
+| patch_generated | 是否成功生成 patched QL |
+| patch_compile_ok | patched QL 是否可被 CodeQL 正常分析 |
+| codeql_rerun_ok | patched QL 重跑 CodeQL 是否成功 |
+| patch_runtime_sec | 生成 patched QL 的耗时 |
+| codeql_rerun_runtime_sec | 重跑 CodeQL 的耗时 |
+| error_msg | 若失败，错误信息 |
+
+每条 baseline 告警需要记录：
+
+| 记录项 | 说明 |
+|--------|------|
+| tool_name | 工具名称 |
+| alert_id | 告警标识 |
+| cwe_id | CWE 类型 |
+| file_path | 文件 |
+| function_name | 函数 |
+| label | bad/good/unknown（ground truth） |
+| baseline_present | baseline SARIF 中是否存在该告警 |
+| patched_present | patched SARIF 中是否仍存在该告警 |
+| verdict | vulnerable / safe / error |
+| predicted | 1=vulnerable，0=safe |
+| analyzed | 是否成功完成 patch + rerun + diff |
+| runtime_sec | 该告警对应的总处理耗时 |
+| timeout | 是否超时 |
+| crashed | 是否崩溃 |
+| error_msg | 若失败，错误信息 |
+
+verdict 判定规则：
+
+| baseline_present | patched_present | verdict |
+|------------------|-----------------|---------|
+| true | true | vulnerable |
+| true | false | safe |
+| true | unknown | error |
+
+每个 patch 类 tool 运行结束后写入：
+
+| 文件 | 内容 |
+|------|------|
+| `patch_generation_results_{tool_name}.csv` | patched QL 生成与重跑记录 |
+| `alert_diff_{tool_name}.csv` | baseline SARIF 与 patched SARIF 的告警差异 |
+| `alert_results_{tool_name}.csv` | 每条 baseline 告警的最终 verdict |
+
+#### Phase 3B：直接验证类工具
+
+适用于 **Symbolic Sanitizer**。
+
+执行流程：
+
+```text
+baseline SARIF + dataset root + compile script + taint path
+        ↓
+Symbolic Sanitizer 验证路径可达性
+        ↓
+直接输出每条告警的 vulnerable / safe / error
+```
+
+每条 baseline 告警需要记录：
 
 | 记录项 | 说明 |
 |--------|------|
@@ -240,15 +334,16 @@ y 轴：秒
 | cwe_id | CWE 类型 |
 | file_path | 文件 |
 | function_name | 函数 |
-| label | bad/good（ground truth） |
+| label | bad/good/unknown（ground truth） |
 | verdict | vulnerable / safe / error |
-| analyzed | 是否成功完成 |
+| predicted | 1=vulnerable，0=safe |
+| analyzed | 是否成功完成验证 |
 | runtime_sec | 该告警的处理耗时 |
 | timeout | 是否超时 |
 | crashed | 是否崩溃 |
 | error_msg | 若失败，错误信息 |
 
-每个 tool 运行结束后写入一份 `alert_results_{tool_name}.csv`。
+每个直接验证类 tool 运行结束后写入一份 `alert_results_{tool_name}.csv`。
 
 ### Phase 4：汇总（合并所有 tool 的结果）
 
